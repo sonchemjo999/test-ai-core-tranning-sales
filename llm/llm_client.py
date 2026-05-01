@@ -165,14 +165,43 @@ def _chat_json(
             messages=messages,
         )
     except Exception as exc:
-        # Some OpenAI-compatible gateways/models do not support JSON mode.
-        # Retry once without response_format before surfacing a provider error.
+        is_auth_error = any(
+            marker in str(exc) or marker in type(exc).__name__
+            for marker in ["401", "403", "AuthenticationError", "PermissionDenied"]
+        )
+        # Retry without response_format if JSON mode is unsupported.
         if "response_format" in str(exc) or "json_object" in str(exc):
             completion = client.chat.completions.create(
                 model=model_name,
                 temperature=temperature,
                 messages=messages,
             )
+        # Auth errors — try other available providers in priority order.
+        elif is_auth_error:
+            tried = {provider}
+            priority = ["gpt", "gemini", "grok", "groq", "openrouter"]
+            for next_provider in priority:
+                if next_provider in tried:
+                    continue
+                api_key, _, next_model, _ = _provider_config(next_provider)
+                if api_key:
+                    try:
+                        next_client = _selected_client(next_provider)
+                        completion = next_client.chat.completions.create(
+                            model=model_name,
+                            temperature=temperature,
+                            response_format={"type": "json_object"},
+                            messages=messages,
+                        )
+                        print(f"[llm] fallback: {provider} → {next_provider} for model={model_name}")
+                        break
+                    except Exception:
+                        tried.add(next_provider)
+                        continue
+            else:
+                raise RuntimeError(
+                    f"LLM provider error ({provider}, model={model_name}, base_url={base_url}): {exc}"
+                ) from exc
         else:
             print(
                 "[llm] chat completion failed",
