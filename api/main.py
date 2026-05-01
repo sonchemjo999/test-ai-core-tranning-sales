@@ -11,12 +11,13 @@ import uuid
 
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from core.config import AI_API_KEY, env_str
 
-_frontend_url = os.getenv("FRONTEND_URL", "")
+_frontend_url = env_str("FRONTEND_URL").rstrip("/")
 _allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 if _frontend_url:
     _allowed_origins.append(_frontend_url)
-_railway_public_url = os.getenv("RAILWAY_PUBLIC_URL")
+_railway_public_url = env_str("RAILWAY_PUBLIC_URL").rstrip("/")
 if _railway_public_url:
     _allowed_origins.append(_railway_public_url)
 
@@ -39,7 +40,6 @@ from core.schemas import (
 )
 from core.state import SalesSessionState, initial_sales_state
 from api.auth import verify_api_key
-from core.config import AI_API_KEY
 
 app = FastAPI(
     title="Sale Train Agent API",
@@ -53,6 +53,19 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+print(
+    "[startup] env-debug-v2",
+    {
+        "has_ai_api_key": bool(os.getenv("AI_API_KEY", "")),
+        "ai_api_key_len": len(os.getenv("AI_API_KEY", "")),
+        "configured_is_default": AI_API_KEY == "dev-secret-key-change-in-production",
+        "frontend_url": _frontend_url,
+        "allowed_origins": _allowed_origins,
+        "port": os.getenv("PORT", ""),
+        "railway_public_url": _railway_public_url,
+    },
 )
 
 SESSION_STORE: dict[str, SalesSessionState] = {}
@@ -96,6 +109,7 @@ def root() -> dict[str, str]:
         "status": "ok",
         "service": "Sale Train Agent API",
         "health": "/health",
+        "version": "env-debug-v2",
     }
 
 
@@ -106,15 +120,22 @@ def _fingerprint(value: str) -> str:
 @app.get("/debug/env")
 def debug_env() -> dict[str, object]:
     raw_ai_api_key = os.getenv("AI_API_KEY", "")
+    relevant_env_keys = sorted(
+        key
+        for key in os.environ
+        if any(token in key.upper() for token in ("AI", "KEY", "FRONTEND", "RAILWAY", "PORT"))
+    )
     return {
+        "version": "env-debug-v2",
         "has_raw_ai_api_key": bool(raw_ai_api_key),
         "raw_ai_api_key_len": len(raw_ai_api_key),
         "raw_ai_api_key_fp": _fingerprint(raw_ai_api_key.strip().strip("'\"")),
         "configured_ai_api_key_len": len(AI_API_KEY),
         "configured_ai_api_key_fp": _fingerprint(AI_API_KEY),
         "configured_is_default": AI_API_KEY == "dev-secret-key-change-in-production",
-        "frontend_url": os.getenv("FRONTEND_URL", ""),
+        "frontend_url": _frontend_url,
         "allowed_origins": _allowed_origins,
+        "relevant_env_keys": relevant_env_keys,
     }
 
 
