@@ -7,18 +7,21 @@ from __future__ import annotations
 import re
 import uuid
 
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from graph.graph import build_sales_graph
 from core.schemas import (
     ChatRequest,
     ChatResponse,
+    DeepReadRequest,
+    DeepReadResponse,
     EvaluationPayload,
     FeedbackResponse,
     InitSessionRequest,
     InitSessionResponse,
     NextLevelResponse,
+    ParseDocumentResponse,
     RetryResponse,
     WebChatRequest,
     WebChatResponse,
@@ -85,6 +88,14 @@ def health() -> dict[str, str]:
 
 @app.post("/init-session", response_model=InitSessionResponse)
 def init_session(body: InitSessionRequest) -> InitSessionResponse:
+    """[CLIENT: CLI / Mobile only]
+
+    Create a new stateful session (stored in-memory SESSION_STORE).
+    Web app does NOT use this — web manages sessions via Supabase DB
+    and calls /web/chat (stateless). Reserved for CLI and future mobile client.
+
+    DO NOT DELETE — this is the contract for mobile client.
+    """
     session_id = str(uuid.uuid4())
     scenario = _normalize_slug(body.scenario)
     persona = _normalize_slug(body.persona)
@@ -106,6 +117,14 @@ def init_session(body: InitSessionRequest) -> InitSessionResponse:
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(body: ChatRequest) -> ChatResponse:
+    """[CLIENT: CLI / Mobile only]
+
+    Send a message within a stateful session (uses LangGraph + SESSION_STORE).
+    Web app does NOT use this — web calls /web/chat which is stateless and
+    receives all context from the client. Reserved for CLI and future mobile client.
+
+    DO NOT DELETE — this is the contract for mobile client.
+    """
     sid = body.session_id
     if sid not in SESSION_STORE:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -142,6 +161,14 @@ def chat(body: ChatRequest) -> ChatResponse:
 
 @app.get("/feedback/{session_id}", response_model=FeedbackResponse)
 def feedback(session_id: str) -> FeedbackResponse:
+    """[CLIENT: CLI / Mobile only]
+
+    Retrieve evaluation results for a completed session from SESSION_STORE.
+    Web app does NOT use this — web calls /web/evaluate with messages from
+    Supabase DB. Reserved for CLI and future mobile client.
+
+    DO NOT DELETE — this is the contract for mobile client.
+    """
     if session_id not in SESSION_STORE:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -165,7 +192,14 @@ def feedback(session_id: str) -> FeedbackResponse:
 
 @app.post("/session/retry/{session_id}", response_model=RetryResponse)
 def retry_session(session_id: str) -> RetryResponse:
-    """Reset chat history, keep same scenario & persona. Allows re-attempt."""
+    """[CLIENT: CLI / Mobile only]
+
+    Reset chat history, keep same scenario & persona. Allows re-attempt.
+    Web app does NOT use this — web creates a new Supabase session instead.
+    Reserved for CLI and future mobile client.
+
+    DO NOT DELETE — this is the contract for mobile client.
+    """
     if session_id not in SESSION_STORE:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -193,7 +227,14 @@ def retry_session(session_id: str) -> RetryResponse:
 
 @app.post("/session/next-level/{session_id}", response_model=NextLevelResponse)
 def next_level_session(session_id: str) -> NextLevelResponse:
-    """Upgrade persona to the next difficulty level, reset chat history."""
+    """[CLIENT: CLI / Mobile only]
+
+    Upgrade persona to the next difficulty level, reset chat history.
+    Web app does NOT use this — web handles difficulty selection via UI
+    and creates a new Supabase session. Reserved for CLI and future mobile client.
+
+    DO NOT DELETE — this is the contract for mobile client.
+    """
     if session_id not in SESSION_STORE:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -254,8 +295,6 @@ async def web_chat(body: WebChatRequest, _: str = Depends(verify_api_key)):
 
     result = await run_in_threadpool(
         generate_customer_turn_web,
-        llm_provider=body.llm_provider,
-        llm_model=body.llm_model,
         customer_persona=body.customer_persona,
         scenario_title=body.scenario_title,
         scenario_description=body.scenario_description,
@@ -305,8 +344,6 @@ def web_evaluate(body: WebEvaluateRequest, _: str = Depends(verify_api_key)):
     messages = [{"role": m.role, "content": m.content} for m in body.messages]
 
     result = generate_evaluation_web(
-        llm_provider=body.llm_provider,
-        llm_model=body.llm_model,
         messages=messages,
         scenario_title=body.scenario_title,
         scenario_description=body.scenario_description,
@@ -327,11 +364,7 @@ def web_generate_scenario(body: WebGenerateScenarioRequest, _: str = Depends(ver
     """Auto-generate scenario from document contents."""
     from llm.llm_client import generate_scenario_from_doc
 
-    result = generate_scenario_from_doc(
-        document_contents=body.document_contents,
-        llm_provider=body.llm_provider,
-        llm_model=body.llm_model,
-    )
+    result = generate_scenario_from_doc(document_contents=body.document_contents)
 
     return WebGenerateScenarioResponse(
         title=result["title"],
@@ -340,16 +373,94 @@ def web_generate_scenario(body: WebGenerateScenarioRequest, _: str = Depends(ver
         customer_persona=result["customer_persona"],
     )
 
+@app.post("/web/parse-document", response_model=ParseDocumentResponse)
+async def web_parse_document(
+    file: UploadFile,
+    _: str = Depends(verify_api_key),
+):
+    """Parse an uploaded document (PDF, DOCX, XLSX, CSV, TXT) into clean Markdown.
+
+    Phase 1 of Hybrid NotebookLM Architecture — Ingestion Pipeline.
+    Returns structured Markdown text preserving tables and headings.
+    """
+    from tools.document_processor import process_document, DocumentProcessingError
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided.")
+
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    # Limit file size to 20MB
+    if len(file_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 20MB.")
+
+    try:
+        result = process_document(
+            file_bytes=file_bytes,
+            filename=file.filename,
+            content_type=file.content_type,
+        )
+    except DocumentProcessingError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    return ParseDocumentResponse(**result)
+
+
+@app.post("/web/deep-read", response_model=DeepReadResponse)
+def web_deep_read(body: DeepReadRequest, _: str = Depends(verify_api_key)):
+    """Phase 2 — NotebookLM Deep Read: Extract CheatSheet + Scenarios from document.
+
+    Receives raw_markdown from Phase 1, sends to high-context LLM (Gemini 2.5)
+    for structured knowledge extraction. Returns CheatSheet + training Scenarios.
+    """
+    from llm.llm_client import generate_deep_read
+
+    if len(body.raw_markdown) > 500_000:
+        raise HTTPException(
+            status_code=413,
+            detail="Document too large for Deep Read. Maximum ~500K characters.",
+        )
+
+    try:
+        result = generate_deep_read(raw_markdown=body.raw_markdown)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"[deep-read] LLM extraction failed: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI extraction failed: {str(e)}",
+        )
+
+    return DeepReadResponse(**result)
+
+
 @app.websocket("/ws/call/{session_id}")
 async def call_room_websocket(
     websocket: WebSocket,
     session_id: str,
     persona: str = "A potential buyer",
     company_context: str | None = None,
-    llm_provider: str | None = None,
-    llm_model: str | None = None,
+    cheat_sheet: str | None = None,
+    token: str | None = None,
 ):
-    """Real-time Call Room Endpoint via OpenRouter + FPT TTS."""
+    """Real-time Call Room Endpoint via OpenRouter + FPT TTS.
+
+    Phase 3: Accepts optional `cheat_sheet` query param (compact JSON from Phase 2).
+    If provided, it replaces company_context for more accurate AI customer behavior.
+    """
+    # ── Token auth ──────────────────────────────────────────────
+    from api.ws_auth import verify_ws_token
+
+    if not token:
+        await websocket.close(code=1008, reason="Missing auth token")
+        return
+
+    valid, reason = verify_ws_token(token, session_id)
+    if not valid:
+        await websocket.close(code=1008, reason=f"Auth failed: {reason}")
+        return
     await websocket.accept()
     from fastapi.concurrency import run_in_threadpool
     from llm.llm_client import generate_customer_turn_web
@@ -362,17 +473,20 @@ async def call_room_websocket(
         return int((time.perf_counter() - start) * 1000)
 
     history = []
+    _turn_counter = 0  # TIP-003 INSTRUMENTATION - REMOVE AFTER
 
     try:
         while True:
             data = await websocket.receive_text()
-            print(f"Received WS data: {data}")
+            safe_data = data.encode('ascii', 'backslashreplace').decode('ascii')
+            print(f"Received WS data: {safe_data}")
             try:
                 msg = json.loads(data)
                 if msg.get("type") != "user_text":
                     continue
 
                 turn_start = time.perf_counter()
+                _turn_counter += 1  # TIP-003 INSTRUMENTATION - REMOVE AFTER
                 user_text = msg["text"]
                 time_remaining = msg.get("time_remaining_seconds")
                 client_sent_at_ms = msg.get("client_sent_at_ms")
@@ -384,28 +498,38 @@ async def call_room_websocket(
                     "client_stt_final_at_ms": client_stt_final_at_ms,
                 }
                 print(f"[voice-latency] ws_user_text_received {metrics}")
-                print(f"User text received: {user_text}, Time remaining: {time_remaining}")
+                safe_text = user_text.encode('ascii', 'backslashreplace').decode('ascii')
+                print(f"User text received: {safe_text}, Time remaining: {time_remaining}")
+                # TIP-003 INSTRUMENTATION - REMOVE AFTER: log turn number
+                print(f"[LATENCY][TIP-003] ===== TURN {_turn_counter} START =====")
+                if "conversation_history" in msg:
+                    history = msg["conversation_history"]
                 history.append({"role": "user", "content": user_text})
 
+                # TIP-003 INSTRUMENTATION - REMOVE AFTER: measure import + client creation overhead
+                pre_llm_start = time.perf_counter()
                 llm_start = time.perf_counter()
+                print(f"[LATENCY][TIP-003] turn={_turn_counter} | pre_llm_overhead (history+imports): {(llm_start - turn_start)*1000:.0f}ms")
                 print("Generating streaming LLM response...")
                 
                 from llm.llm_client import generate_customer_turn_voice_stream
                 from tools.tts_client import wait_for_fpt_audio
                 
+                # TIP-003 INSTRUMENTATION - REMOVE AFTER: measure stream creation (includes async client init)
+                stream_create_start = time.perf_counter()
                 stream = generate_customer_turn_voice_stream(
-                    llm_provider=llm_provider,
-                    llm_model=llm_model,
                     customer_persona=persona,
                     scenario_title="Sales Call",
                     scenario_description="",
                     company_context=company_context,
+                    cheat_sheet=cheat_sheet,
                     conversation_history=history,
                     last_user_message=user_text,
                     current_turn=(len(history) // 2) + 1,
                     max_turns=12,
                     time_remaining_seconds=time_remaining,
                 )
+                print(f"[LATENCY][TIP-003] turn={_turn_counter} | stream_create: {(time.perf_counter() - stream_create_start)*1000:.0f}ms")
                 
                 full_bot_text = ""
                 
@@ -413,44 +537,47 @@ async def call_room_websocket(
                 from tools.tts_elevenlabs import generate_tts_elevenlabs_base64
                 from core.config import ELEVENLABS_API_KEY
                 
-                async def handle_tts_bg(sentence_text: str, ws: WebSocket, tts_start_ms: float):
+                async def generate_tts_task(sentence_text: str, tts_start_ms: float):
                     if ELEVENLABS_API_KEY:
-                        # Dùng ElevenLabs Base64
                         b64_url = await generate_tts_elevenlabs_base64(sentence_text)
-                        if b64_url:
-                            total_tts_ms = int((time.perf_counter() - tts_start_ms) * 1000)
-                            print(f"[voice-latency] ElevenLabs TTS Ready | Total: {total_tts_ms}ms")
-                            await ws.send_json({
-                                "type": "audio_url",
-                                "url": b64_url,
-                                "metrics": metrics,
-                            })
+                        return b64_url, tts_start_ms
                     elif TTS_API_KEY:
-                        # Fallback FPT
-                        # print(f"Generating FPT TTS for: {sentence_text}")
+                        from tools.tts_client import generate_tts_fpt, wait_for_fpt_audio
                         audio_url = await generate_tts_fpt(sentence_text)
                         if audio_url:
-                            # print(f"Polling FPT URL: {audio_url}")
-                            poll_start = time.perf_counter()
                             is_ready = await wait_for_fpt_audio(audio_url)
-                            poll_elapsed = int((time.perf_counter() - poll_start) * 1000)
-                            total_tts_ms = int((time.perf_counter() - tts_start_ms) * 1000)
-                            
                             if is_ready:
-                                print(f"[voice-latency] TTS Ready | Total: {total_tts_ms}ms | Polling: {poll_elapsed}ms | URL: {audio_url}")
-                                await ws.send_json({
-                                    "type": "audio_url",
-                                    "url": audio_url,
-                                    "metrics": metrics,
-                                })
-                            else:
-                                print(f"[voice-latency] TTS Timeout | Polling: {poll_elapsed}ms | URL: {audio_url}")
+                                return audio_url, tts_start_ms
+                    return None, tts_start_ms
+
+                tts_queue = asyncio.Queue()
+
+                async def tts_sender_worker(ws: WebSocket):
+                    while True:
+                        task = await tts_queue.get()
+                        if task is None:
+                            break
+                        audio_url, tts_start_ms = await task
+                        if audio_url:
+                            total_tts_ms = int((time.perf_counter() - tts_start_ms) * 1000)
+                            print(f"[voice-latency] TTS Ready | Total: {total_tts_ms}ms")
+                            await ws.send_json({
+                                "type": "audio_url",
+                                "url": audio_url,
+                                "metrics": metrics,
+                            })
+                        tts_queue.task_done()
+
+                sender_task = asyncio.create_task(tts_sender_worker(websocket))
 
                 first_sentence = True
+                first_tts_dispatched = False  # TIP-003 INSTRUMENTATION - REMOVE AFTER
                 async for sentence in stream:
                     if first_sentence:
                         ttfs = elapsed_ms(llm_start)
                         print(f"[voice-latency] LLM TTFS (Time To First Sentence): {ttfs}ms")
+                        # TIP-003 INSTRUMENTATION - REMOVE AFTER
+                        print(f"[LATENCY][TIP-003] turn={_turn_counter} | TTFS: {ttfs}ms | total_from_ws_recv: {elapsed_ms(turn_start)}ms")
                         first_sentence = False
                         
                     full_bot_text += sentence + " "
@@ -464,11 +591,25 @@ async def call_room_websocket(
                     })
                     
                     # Chạy TTS ngầm để không block quá trình sinh câu tiếp theo của LLM
-                    asyncio.create_task(handle_tts_bg(sentence, websocket, time.perf_counter()))
+                    # TIP-003 INSTRUMENTATION - REMOVE AFTER: log first TTS dispatch
+                    if not first_tts_dispatched:
+                        print(f"[LATENCY][TIP-003] turn={_turn_counter} | first_tts_dispatch: {elapsed_ms(turn_start)}ms from turn_start")
+                        first_tts_dispatched = True
+                    
+                    # Tạo task TTS song song nhưng đưa vào queue để gửi tuần tự
+                    task = asyncio.create_task(generate_tts_task(sentence, time.perf_counter()))
+                    await tts_queue.put(task)
+
+                # Chờ xử lý xong tất cả các câu trong queue
+                await tts_queue.put(None)
+                await sender_task
 
                 metrics["llm_ms"] = elapsed_ms(llm_start)
                 metrics["backend_total_ms"] = elapsed_ms(turn_start)
+                metrics["turn_number"] = _turn_counter  # TIP-003 INSTRUMENTATION - REMOVE AFTER
                 print(f"[voice-latency] backend_done {metrics}")
+                # TIP-003 INSTRUMENTATION - REMOVE AFTER: summary line
+                print(f"[LATENCY][TIP-003] turn={_turn_counter} | SUMMARY: llm_total={metrics['llm_ms']}ms | backend_total={metrics['backend_total_ms']}ms")
                 
                 history.append({"role": "assistant", "content": full_bot_text.strip()})
                 
@@ -494,26 +635,3 @@ async def call_room_websocket(
         print(f"WebSocket error: {e}")
 
 
-# ================================================================
-# Direct Voice WebSocket — for web voice gateway relay
-# Internal endpoint: only accepts connections from web voice gateway
-# ================================================================
-
-@app.websocket("/ws/direct-call/{session_id}")
-async def direct_call_websocket(
-    websocket: WebSocket,
-    session_id: str,
-    token: str | None = None,
-):
-    """Internal direct voice WebSocket for web gateway relay.
-
-    Mobile clients connect to the web voice gateway, not here.
-    Web gateway verifies session ownership + quota, then forwards
-    binary audio here over this internal connection.
-
-    Query params:
-        token: internal API key (AI_API_KEY) for gateway authentication
-    """
-    from api.voice_ws import handle_direct_voice_websocket
-
-    await handle_direct_voice_websocket(websocket, session_id, token)

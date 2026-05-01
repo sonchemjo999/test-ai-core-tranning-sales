@@ -196,7 +196,7 @@ Tự động nhận diện bối cảnh để chấm điểm công bằng:
      NẾU CÓ TÀI LIỆU (Playbook/Script mẫu): Bắt buộc lấy câu mẫu từ tài liệu để làm suggestion.
      KHÔNG được khuyên chung chung kiểu "nên hỏi nhu cầu", "cần lắng nghe hơn".
      PHẢI viết nguyên câu hoàn chỉnh, tự nhiên, có thể dùng ngay trong cuộc gọi thật.
-   - playbook_source: Trích dẫn NGUYÊN VĂN tên phần/mục trong tài liệu mà bạn lấy câu mẫu (ví dụ: "Phần 2: Xử lý từ chối giá"). Nếu không dùng tài liệu, để null.
+   - source_citation: Trích dẫn NGUYÊN VĂN tên phần/mục trong tài liệu mà bạn lấy câu mẫu (ví dụ: "Phần 2: Xử lý từ chối giá"). Nếu không dùng tài liệu, để null.
 4. Nếu toàn bộ câu thoại của Sales đều tốt → trả mảng rỗng: []
 5. Liệt kê TẤT CẢ các lỗi nghiêm trọng (tối đa 10 items) để tạo thành danh sách bí kíp phong phú.
 
@@ -219,7 +219,7 @@ Output strictly JSON:
     {
       "user_sentence": "nguyên văn câu Sales từ transcript", 
       "ai_suggestion": "Câu thay thế cụ thể mà Sales lẽ ra nên nói, viết nguyên câu hoàn chỉnh",
-      "playbook_source": "Trích dẫn nguồn từ tài liệu (nếu có)"
+      "source_citation": "Trích dẫn nguồn từ tài liệu (nếu có)"
     }
   ],
   "top_3_tips": ["tip 1", "tip 2", "tip 3"]
@@ -241,3 +241,59 @@ Hãy trích xuất và tạo ra 4 thông tin sau dưới dạng JSON:
 Output phải đúng chuẩn JSON, không thừa text ở ngoài.
 """
 
+
+# ================================================================
+# Phase 2: NotebookLM Deep Read — Massive Context Extraction
+# ================================================================
+
+MASSIVE_CONTEXT_EXTRACTION_PROMPT = """Bạn là một chuyên gia phân tích doanh nghiệp (Business Intelligence Analyst) kiêm huấn luyện viên Sales hàng đầu.
+
+== NHIỆM VỤ ==
+Đọc TOÀN BỘ tài liệu doanh nghiệp dưới đây một cách CỰC KỲ TỈ MỈ. Sau đó trích xuất thông tin có cấu trúc để phục vụ hệ thống AI luyện tập Sales.
+
+== QUY TẮC TRÍCH XUẤT (TUYỆT ĐỐI TUÂN THỦ) ==
+1. **KHÔNG BỊA DỮ LIỆU:** Chỉ trích xuất thông tin CÓ TRONG TÀI LIỆU. Nếu tài liệu không đề cập giá → để price = "". Nếu không có log chat → để brand_voice = null.
+2. **GIÁ PHẢI CHÍNH XÁC 100%:** Nếu tài liệu ghi "500k/tháng" thì trả về đúng "500k/tháng", KHÔNG được làm tròn hay đổi đơn vị.
+3. **USP phải CỤ THỂ:** Không dùng câu chung chung như "Sản phẩm chất lượng cao". Phải lấy từ tài liệu, VD: "Tích hợp Zalo OA miễn phí", "Uptime SLA 99.9%".
+4. **common_objections:** Nếu tài liệu có FAQ, phản hồi khách hàng, hoặc log chat → bóc tách thành trigger + expected_response. Nếu KHÔNG CÓ trong tài liệu → TỰ SUY LUẬN từ đặc điểm sản phẩm (VD: sản phẩm đắt → trigger = "Giá cao quá").
+5. **scenarios:** Tạo 2-4 kịch bản luyện tập đa dạng (khác nhau về mức độ khó và loại khách hàng). Mỗi kịch bản phải có hidden_agenda thực tế.
+6. **brand_voice:** Chỉ trả về nếu phát hiện trong tài liệu (log chat, script mẫu, hướng dẫn CSKH). Nếu không có → để null.
+7. **competitors_mentioned:** Liệt kê TẤT CẢ tên đối thủ xuất hiện trong tài liệu (kể cả gián tiếp).
+
+== OUTPUT FORMAT ==
+Trả về ĐÚNG JSON schema sau, KHÔNG thêm text bên ngoài:
+{
+  "cheat_sheet": {
+    "products": [
+      {
+        "name": "Tên sản phẩm",
+        "price": "Giá bán chính xác từ tài liệu hoặc rỗng",
+        "key_features": ["Tính năng 1", "Tính năng 2"],
+        "limitations": ["Hạn chế nếu phát hiện"]
+      }
+    ],
+    "unique_selling_points": ["USP cụ thể 1", "USP cụ thể 2"],
+    "brand_voice": {
+      "tone": "Mô tả văn phong",
+      "pronouns": "Cách xưng hô: Dạ/Anh Chị",
+      "forbidden_words": ["Từ cấm 1"]
+    },
+    "common_objections": [
+      {
+        "trigger": "Câu từ chối của khách",
+        "expected_response": "Cách xử lý chuẩn"
+      }
+    ],
+    "competitors_mentioned": ["Tên đối thủ"]
+  },
+  "scenarios": [
+    {
+      "title": "Tên kịch bản",
+      "customer_persona": "Mô tả chi tiết chân dung khách hàng",
+      "hidden_agenda": "Mục tiêu ẩn thực sự của khách",
+      "difficulty": "easy|medium|hard",
+      "expected_objections": ["Lời từ chối có thể xảy ra"]
+    }
+  ]
+}
+"""

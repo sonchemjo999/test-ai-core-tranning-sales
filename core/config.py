@@ -2,52 +2,28 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load root .env for local development only. Runtime env vars take precedence.
-_root = Path(__file__).resolve().parent.parent.parent
-load_dotenv(_root / ".env", override=False)
+# Load root .env
+_root = Path(__file__).resolve().parent.parent.parent  # core-ai/core/config.py → core-ai → A20-App-154/
+load_dotenv(_root / ".env", override=True)
 
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+OPEN_ROUTER_API = os.getenv("OPEN_ROUTER_API", "").strip()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "claude-sonnet-4-20250514")
+# LangGraph / Sale Train Agent — OpenAI JSON-mode calls (override in .env)
+SALES_LLM_MODEL = os.getenv("SALES_LLM_MODEL", "google/gemini-2.5-flash-lite")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+# Shared secret for Web ↔ FastAPI authentication
+AI_API_KEY = os.getenv("AI_API_KEY", "dev-secret-key-change-in-production")
 
-def env_str(name: str, default: str = "") -> str:
-    value = os.getenv(name, default).strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        value = value[1:-1].strip()
-    return value
+# FPT.AI Text-to-Speech
+TTS_API_KEY = os.getenv("TTS_API_KEY", "").strip()
+TTS_VOICE = os.getenv("TTS_VOICE", "minhquang")
+TTS_SPEED = os.getenv("TTS_SPEED", "1")
 
-
-ANTHROPIC_API_KEY = env_str("ANTHROPIC_API_KEY")
-OPENAI_API_KEY = env_str("OPENAI_API_KEY")
-OPENAI_BASE_URL = env_str("OPENAI_BASE_URL", "https://api.openai.com/v1")
-OPENAI_MODEL = env_str("OPENAI_MODEL", "gpt-4o-mini")
-GEMINI_API_KEY = env_str("GEMINI_API_KEY")
-GEMINI_BASE_URL = env_str("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
-GEMINI_MODEL = env_str("GEMINI_MODEL", "gemini-2.5-flash-lite")
-GROK_API_KEY = env_str("GROK_API_KEY", env_str("XAI_API_KEY"))
-GROK_BASE_URL = env_str("GROK_BASE_URL", env_str("XAI_BASE_URL", "https://api.x.ai/v1"))
-GROK_MODEL = env_str("GROK_MODEL", "grok-4")
-OPEN_ROUTER_API = env_str("OPEN_ROUTER_API", env_str("OPENROUTER_API_KEY"))
-OPEN_ROUTER_BASE_URL = env_str("OPEN_ROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-OPENROUTER_MODEL = env_str("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite")
-GROQ_API_KEY = env_str("GROQ_API_KEY")
-GROQ_BASE_URL = env_str("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-GROQ_MODEL = env_str("GROQ_MODEL", "llama-3.3-70b-versatile")
-DEFAULT_MODEL = env_str("DEFAULT_MODEL", "claude-sonnet-4-20250514")
-
-# LLM_PROVIDER: auto, openrouter, gpt, gemini, grok. groq is also accepted.
-LLM_PROVIDER = env_str("LLM_PROVIDER", "auto")
-SALES_LLM_MODEL = env_str("SALES_LLM_MODEL", OPENROUTER_MODEL)
-VOICE_LLM_PROVIDER = env_str("VOICE_LLM_PROVIDER", LLM_PROVIDER)
-VOICE_LLM_MODEL = env_str("VOICE_LLM_MODEL")
-LOG_LEVEL = env_str("LOG_LEVEL", "INFO")
-
-# Shared secret for Web -> FastAPI authentication.
-AI_API_KEY = env_str("AI_API_KEY", "dev-secret-key-change-in-production")
-
-# FPT.AI Text-to-Speech.
-TTS_API_KEY = env_str("TTS_API_KEY")
-TTS_VOICE = env_str("TTS_VOICE", "minhquang")
-TTS_SPEED = env_str("TTS_SPEED", "1")
-
-# ElevenLabs Text-to-Speech.
-ELEVENLABS_API_KEY = env_str("ELEVENLABS_API_KEY")
-ELEVENLABS_VOICE_ID = env_str("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
-ELEVENLABS_MODEL_ID = env_str("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
+# ElevenLabs Text-to-Speech
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
+ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")

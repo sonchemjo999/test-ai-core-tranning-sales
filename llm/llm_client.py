@@ -1,4 +1,4 @@
-﻿"""
+"""
 OpenAI JSON-mode helpers for customer simulation and evaluation.
 """
 
@@ -9,27 +9,7 @@ from typing import Any, AsyncGenerator
 
 from openai import OpenAI, AsyncOpenAI
 
-from core.config import (
-    GEMINI_API_KEY,
-    GEMINI_BASE_URL,
-    GEMINI_MODEL,
-    GROK_API_KEY,
-    GROK_BASE_URL,
-    GROK_MODEL,
-    GROQ_API_KEY,
-    GROQ_BASE_URL,
-    GROQ_MODEL,
-    LLM_PROVIDER,
-    OPENAI_API_KEY,
-    OPENAI_BASE_URL,
-    OPENAI_MODEL,
-    OPEN_ROUTER_API,
-    OPEN_ROUTER_BASE_URL,
-    OPENROUTER_MODEL,
-    SALES_LLM_MODEL,
-    VOICE_LLM_MODEL,
-    VOICE_LLM_PROVIDER,
-)
+from core.config import OPENAI_API_KEY, SALES_LLM_MODEL, GEMINI_API_KEY, OPEN_ROUTER_API, GROQ_API_KEY
 from core.schemas import EvaluationPayload
 from core.state import EvaluationResults, SalesSessionState
 from llm.prompts import (
@@ -38,102 +18,59 @@ from llm.prompts import (
     EVALUATOR_SYSTEM_PROMPT,
     EVALUATOR_SYSTEM_PROMPT_WEB,
     GENERATE_SCENARIO_SYSTEM_PROMPT,
+    MASSIVE_CONTEXT_EXTRACTION_PROMPT,
     persona_instruction,
     scenario_brief,
 )
 
 
-PROVIDER_ALIASES = {
-    "": "auto",
-    "auto": "auto",
-    "openrouter": "openrouter",
-    "open-router": "openrouter",
-    "open_router": "openrouter",
-    "router": "openrouter",
-    "gpt": "gpt",
-    "openai": "gpt",
-    "gemini": "gemini",
-    "google": "gemini",
-    "grok": "grok",
-    "xai": "grok",
-    "x-ai": "grok",
-    "groq": "groq",
-}
-
-
-def _normalize_provider(provider: str | None) -> str:
-    key = (provider or "auto").strip().lower()
-    if key not in PROVIDER_ALIASES:
-        raise ValueError("Provider khong hop le. Dung: auto, openrouter, gpt, gemini, grok.")
-    return PROVIDER_ALIASES[key]
-
-
-def _provider_config(provider: str) -> tuple[str, str, str, dict[str, str] | None]:
-    if provider == "openrouter":
-        return (
-            OPEN_ROUTER_API,
-            OPEN_ROUTER_BASE_URL,
-            SALES_LLM_MODEL or OPENROUTER_MODEL,
-            {
+def _client() -> OpenAI:
+    if OPEN_ROUTER_API:
+        return OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPEN_ROUTER_API,
+            default_headers={
                 "HTTP-Referer": "http://localhost:3000",
                 "X-OpenRouter-Title": "A20-App",
-            },
+            }
         )
-    if provider == "gpt":
-        return OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL, None
-    if provider == "gemini":
-        return GEMINI_API_KEY, GEMINI_BASE_URL, GEMINI_MODEL, None
-    if provider == "grok":
-        return GROK_API_KEY, GROK_BASE_URL, GROK_MODEL, None
-    if provider == "groq":
-        return GROQ_API_KEY, GROQ_BASE_URL, GROQ_MODEL, None
-    raise RuntimeError(f"Provider khong ho tro: {provider}")
-
-
-def _resolve_provider(provider: str | None) -> str:
-    selected = _normalize_provider(provider)
-    if selected != "auto":
-        return selected
-    if OPEN_ROUTER_API:
-        return "openrouter"
-    if OPENAI_API_KEY:
-        return "gpt"
     if GEMINI_API_KEY:
-        return "gemini"
-    if GROK_API_KEY:
-        return "grok"
+        return OpenAI(
+            api_key=GEMINI_API_KEY,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
+    if not OPENAI_API_KEY:
+        raise RuntimeError(
+            "Cần cấu hình OPENAI_API_KEY, GEMINI_API_KEY hoặc OPEN_ROUTER_API trong file .env."
+        )
+    return OpenAI(api_key=OPENAI_API_KEY)
+
+
+def _async_client() -> AsyncOpenAI:
     if GROQ_API_KEY:
-        return "groq"
-    raise RuntimeError("Can cau hinh it nhat mot key: OPEN_ROUTER_API, OPENAI_API_KEY, GEMINI_API_KEY, GROK_API_KEY.")
-
-
-def _resolve_model_and_provider(
-    *,
-    model_name: str | None,
-    provider: str | None,
-    default_model: str,
-    default_provider: str,
-) -> tuple[str, str]:
-    selected_provider = _resolve_provider(provider or default_provider)
-    api_key, _base_url, provider_model, _headers = _provider_config(selected_provider)
-    if not api_key:
-        raise RuntimeError(f"Chua cau hinh API key cho provider {selected_provider}.")
-    selected_model = (model_name or default_model or provider_model).strip()
-    return selected_model, selected_provider
-
-
-def _selected_client(provider: str) -> OpenAI:
-    api_key, base_url, _model, headers = _provider_config(provider)
-    if not api_key:
-        raise RuntimeError(f"Chua cau hinh API key cho provider {provider}.")
-    return OpenAI(api_key=api_key, base_url=base_url, default_headers=headers)
-
-
-def _selected_async_client(provider: str) -> AsyncOpenAI:
-    api_key, base_url, _model, headers = _provider_config(provider)
-    if not api_key:
-        raise RuntimeError(f"Chua cau hinh API key cho provider {provider}.")
-    return AsyncOpenAI(api_key=api_key, base_url=base_url, default_headers=headers)
+        return AsyncOpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=GROQ_API_KEY,
+        )
+    if OPEN_ROUTER_API:
+        return AsyncOpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPEN_ROUTER_API,
+            default_headers={
+                "HTTP-Referer": "http://localhost:3000",
+                "X-OpenRouter-Title": "A20-App",
+            }
+        )
+    if GEMINI_API_KEY:
+        return AsyncOpenAI(
+            api_key=GEMINI_API_KEY,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
+    if not OPENAI_API_KEY:
+        raise RuntimeError(
+            "Cần cấu hình OPENAI_API_KEY, GEMINI_API_KEY hoặc OPEN_ROUTER_API trong file .env."
+        )
+    return AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 
 def _chat_json(
@@ -141,107 +78,27 @@ def _chat_json(
     system: str,
     user: str,
     temperature: float = 0.6,
-    model_name: str | None = None,
-    provider: str | None = None,
 ) -> dict[str, Any]:
-    model_name, provider = _resolve_model_and_provider(
-        model_name=model_name,
-        provider=provider,
-        default_model="",
-        default_provider=LLM_PROVIDER,
+    client = _client()
+    
+    # Auto fallback to Gemini model if overriding OpenAI's default
+    model_name = SALES_LLM_MODEL
+    if OPEN_ROUTER_API and model_name.startswith("gpt") and not OPENAI_API_KEY:
+        model_name = "google/gemini-2.5-flash-lite"
+    elif GEMINI_API_KEY and model_name.startswith("gpt") and not OPENAI_API_KEY:
+        model_name = "gemini-2.5-flash-lite"
+
+    completion = client.chat.completions.create(
+        model=model_name,
+        temperature=temperature,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
     )
-    client = _selected_client(provider)
-    _api_key, base_url, _provider_model, _headers = _provider_config(provider)
-
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ]
-    try:
-        completion = client.chat.completions.create(
-            model=model_name,
-            temperature=temperature,
-            response_format={"type": "json_object"},
-            messages=messages,
-        )
-    except Exception as exc:
-        is_json_mode_error = "response_format" in str(exc) or "json_object" in str(exc)
-        is_retryable = any(
-            m in str(exc) or m in type(exc).__name__
-            for m in ["502", "503", "504", "InternalServerError", "RateLimitError", "timeout", "TIMEOUT"]
-        )
-
-        if is_json_mode_error:
-            completion = client.chat.completions.create(
-                model=model_name,
-                temperature=temperature,
-                messages=messages,
-            )
-        elif is_retryable:
-            # Retry with exponential backoff, then fallback to other providers.
-            tried: set[str] = {provider}
-            priority = ["gpt", "gemini", "grok", "groq", "openrouter"]
-            result = None
-            for backoff in [0, 1, 2]:
-                if backoff > 0:
-                    import time
-                    time.sleep(backoff)
-                for next_provider in priority:
-                    if next_provider in tried:
-                        continue
-                    api_key, _, next_model, _ = _provider_config(next_provider)
-                    if not api_key:
-                        tried.add(next_provider)
-                        continue
-                    try:
-                        next_client = _selected_client(next_provider)
-                        completion = next_client.chat.completions.create(
-                            model=model_name,
-                            temperature=temperature,
-                            response_format={"type": "json_object"},
-                            messages=messages,
-                        )
-                        print(f"[llm] fallback: {provider} → {next_provider} (502/retry)")
-                        result = completion
-                        break
-                    except Exception:
-                        tried.add(next_provider)
-                        continue
-                if result is not None:
-                    break
-            if result is None:
-                raise RuntimeError(
-                    f"LLM provider error ({provider}, model={model_name}, base_url={base_url}): {exc}"
-                ) from exc
-            completion = result
-        else:
-            print(
-                "[llm] chat completion failed",
-                {
-                    "provider": provider,
-                    "model": model_name,
-                    "base_url": base_url,
-                    "error_type": type(exc).__name__,
-                    "error": str(exc)[:1000],
-                },
-            )
-            raise RuntimeError(
-                f"LLM provider error ({provider}, model={model_name}, base_url={base_url}): {exc}"
-            ) from exc
     raw = completion.choices[0].message.content or "{}"
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as exc:
-        print(
-            "[llm] invalid json response",
-            {
-                "provider": provider,
-                "model": model_name,
-                "base_url": base_url,
-                "raw": raw[:1000],
-            },
-        )
-        raise RuntimeError(f"LLM returned invalid JSON ({provider}, model={model_name}).") from exc
+    return json.loads(raw)
 
 
 def generate_customer_turn(state: SalesSessionState) -> dict[str, Any]:
@@ -334,7 +191,7 @@ def generate_evaluation(state: SalesSessionState) -> EvaluationResults:
         key_mistakes=list(merged.get("key_mistakes") or [])[:12],
         suggested_better_answer=(
             str(merged.get("suggested_better_answer") or "").strip()
-            or "N/A â€” provide a clearer senior-rep script after a longer exchange."
+            or "N/A — provide a clearer senior-rep script after a longer exchange."
         ),
     )
     # model_dump includes computed overall_score
@@ -342,7 +199,7 @@ def generate_evaluation(state: SalesSessionState) -> EvaluationResults:
 
 
 # ================================================================
-# Web App Functions â€” Used by /web/chat and /web/evaluate endpoints
+# Web App Functions — Used by /web/chat and /web/evaluate endpoints
 # ================================================================
 
 from llm.prompts import (
@@ -362,8 +219,6 @@ WEB_RUBRIC_KEYS = (
 
 def generate_customer_turn_web(
     *,
-    llm_provider: str | None = None,
-    llm_model: str | None = None,
     customer_persona: str,
     scenario_title: str,
     scenario_description: str,
@@ -377,61 +232,61 @@ def generate_customer_turn_web(
     follow_up_depth: str = "moderate",
     time_remaining_seconds: int | None = None,
 ) -> dict[str, Any]:
-    """Customer turn for Web App â€” receives context directly, no slug lookup."""
+    """Customer turn for Web App — receives context directly, no slug lookup."""
     tone_map = {
-        "friendly": "Pháº£n há»“i cá»Ÿi má»Ÿ, thÃ¢n thiá»‡n, dá»… tÃ­nh, hay dÃ¹ng tá»« ngá»¯ tÃ­ch cá»±c.",
-        "harsh": "Láº¡nh lÃ¹ng, kháº¯t khe, hay báº¯t báº» cÃ¢u chá»¯, tá» thÃ¡i Ä‘á»™ hoÃ i nghi cao.",
-        "neutral": "Giá»¯ thÃ¡i Ä‘á»™ khÃ¡ch quan, lá»‹ch sá»± nhÆ°ng giá»¯ khoáº£ng cÃ¡ch."
+        "friendly": "Phản hồi cởi mở, thân thiện, dễ tính, hay dùng từ ngữ tích cực.",
+        "harsh": "Lạnh lùng, khắt khe, hay bắt bẻ câu chữ, tỏ thái độ hoài nghi cao.",
+        "neutral": "Giữ thái độ khách quan, lịch sự nhưng giữ khoảng cách."
     }
     depth_map = {
-        "light": "Äáº·t cÃ¢u há»i Ä‘Æ¡n giáº£n, dá»… dÃ ng cháº¥p nháº­n lá»i giáº£i thÃ­ch cá»§a Sales.",
-        "deep": "LiÃªn tá»¥c truy váº¥n sÃ¢u, láº­t láº¡i váº¥n Ä‘á», khÃ´ng dá»… dÃ ng bá»‹ thuyáº¿t phá»¥c, há»i váº·n láº¡i cÃ¢u tráº£ lá»i trÆ°á»›c Ä‘Ã³.",
-        "moderate": "Há»i láº¡i 1-2 cÃ¢u náº¿u chÆ°a rÃµ, pháº£n á»©ng á»Ÿ má»©c bÃ¬nh thÆ°á»ng."
+        "light": "Đặt câu hỏi đơn giản, dễ dàng chấp nhận lời giải thích của Sales.",
+        "deep": "Liên tục truy vấn sâu, lật lại vấn đề, không dễ dàng bị thuyết phục, hỏi vặn lại câu trả lời trước đó.",
+        "moderate": "Hỏi lại 1-2 câu nếu chưa rõ, phản ứng ở mức bình thường."
     }
 
     time_instruction = ""
     if time_remaining_seconds is not None and time_remaining_seconds <= 60:
-        time_instruction = f"\n\n[Há»† THá»NG: CHá»ˆ CÃ’N {time_remaining_seconds} GIÃ‚Y LÃ€ Káº¾T THÃšC CUá»˜C Gá»ŒI. ÄÃ£ Ä‘áº¿n lÃºc pháº£i chá»‘t láº¡i. HÃ£y chá»§ Ä‘á»™ng nháº¯c Ä‘áº¿n viá»‡c sáº¯p háº¿t thá»i gian, háº¹n lá»‹ch tiáº¿p theo vÃ  chÃ o táº¡m biá»‡t ngay láº­p tá»©c trong cÃ¢u tráº£ lá»i nÃ y!]"
+        time_instruction = f"\n\n[HỆ THỐNG: CHỈ CÒN {time_remaining_seconds} GIÂY LÀ KẾT THÚC CUỘC GỌI. Đã đến lúc phải chốt lại. Hãy chủ động nhắc đến việc sắp hết thời gian, hẹn lịch tiếp theo và chào tạm biệt ngay lập tức trong câu trả lời này!]"
 
     system = CUSTOMER_SYSTEM_TEMPLATE_WEB.format(
         scenario_title=scenario_title,
         scenario_description=scenario_description,
         customer_persona=customer_persona,
-        ai_tone_instruction=f"ThÃ¡i Ä‘á»™ cá»§a báº¡n: {tone_map.get(ai_tone, tone_map['neutral'])}",
-        follow_up_depth_instruction=f"Má»©c Ä‘á»™ truy váº¥n: {depth_map.get(follow_up_depth, depth_map['moderate'])}",
+        ai_tone_instruction=f"Thái độ của bạn: {tone_map.get(ai_tone, tone_map['neutral'])}",
+        follow_up_depth_instruction=f"Mức độ truy vấn: {depth_map.get(follow_up_depth, depth_map['moderate'])}",
         time_instruction=time_instruction,
     )
 
     # Inject company context + guardrails (ported from web route.ts)
     if company_context:
         system += (
-            "\n\n== DÆ¯á»šI ÄÃ‚Y LÃ€ THÃ”NG TIN Vá»€ Sáº¢N PHáº¨M/Dá»ŠCH Vá»¤ Cá»¦A CÃ”NG TY KINH DOANH ==\n"
+            "\n\n== DƯỚI ĐÂY LÀ THÔNG TIN VỀ SẢN PHẨM/DỊCH VỤ CỦA CÔNG TY KINH DOANH ==\n"
             f"{company_context}\n\n"
-            "LÆ¯U Ã QUAN TRá»ŒNG (GUARDRAILS):\n"
-            "Báº¡n CHá»ˆ sá»­ dá»¥ng thÃ´ng tin nÃ y lÃ m ná»n táº£ng kiáº¿n thá»©c Ä‘á»ƒ thá»­ thÃ¡ch Sales. "
-            "Tuyá»‡t Ä‘á»‘i KHÃ”NG tá»± Ä‘á»™ng liá»‡t kÃª ráº­p khuÃ´n tÃ­nh nÄƒng sáº£n pháº©m ra trá»« khi Sales há»i hoáº·c lÃ m rÃµ. "
-            "HÃ£y giáº¥u kÃ­n thÃ´ng tin nÃ y vÃ  chá»‰ nháº£ ra tá»«ng chÃºt má»™t qua cÃ¡c cÃ¢u pháº£n biá»‡n."
+            "LƯU Ý QUAN TRỌNG (GUARDRAILS):\n"
+            "Bạn CHỈ sử dụng thông tin này làm nền tảng kiến thức để thử thách Sales. "
+            "Tuyệt đối KHÔNG tự động liệt kê rập khuôn tính năng sản phẩm ra trừ khi Sales hỏi hoặc làm rõ. "
+            "Hãy giấu kín thông tin này và chỉ nhả ra từng chút một qua các câu phản biện."
         )
 
     # Inject document contents (product specs, sales playbook)
     if document_contents:
         system += (
-            "\n\n== TÃ€I LIá»†U Sáº¢N PHáº¨M / QUY TRÃŒNH BÃN HÃ€NG ==\n"
+            "\n\n== TÀI LIỆU SẢN PHẨM / QUY TRÌNH BÁN HÀNG ==\n"
             f"{document_contents}\n\n"
-            "GUARDRAILS TÃ€I LIá»†U:\n"
-            "- Báº¡n Ä‘Ã£ Ä‘á»c tÃ i liá»‡u nÃ y vÃ  BIáº¾T rÃµ sáº£n pháº©m/dá»‹ch vá»¥.\n"
-            "- DÃ¹ng kiáº¿n thá»©c nÃ y Ä‘á»ƒ Há»ŽI XÃ“AY vÃ  THá»Ž THÃCH Sales: há»i vá» thÃ´ng sá»‘, so sÃ¡nh Ä‘á»‘i thá»§, há»i giÃ¡, há»i SLA...\n"
-            "- TUYá»†T Äá»I KHÃ”NG tá»± nÃ³i ra thÃ´ng tin sáº£n pháº©m. Chá»‰ pháº£n á»©ng khi Sales Ä‘á» cáº­p.\n"
-            "- Náº¿u Sales nÃ³i SAI thÃ´ng tin so vá»›i tÃ i liá»‡u, hÃ£y pháº£n bÃ¡c láº¡i má»™t cÃ¡ch tá»± nhiÃªn."
+            "GUARDRAILS TÀI LIỆU:\n"
+            "- Bạn đã đọc tài liệu này và BIẾT rõ sản phẩm/dịch vụ.\n"
+            "- Dùng kiến thức này để HỎI XÓAY và THỎ THÁCH Sales: hỏi về thông số, so sánh đối thủ, hỏi giá, hỏi SLA...\n"
+            "- TUYỆT ĐỐI KHÔNG tự nói ra thông tin sản phẩm. Chỉ phản ứng khi Sales đề cập.\n"
+            "- Nếu Sales nói SAI thông tin so với tài liệu, hãy phản bác lại một cách tự nhiên."
         )
 
     # Auto-end prompt at last turn
     if current_turn >= max_turns:
         system += (
-            f"\n\n== Há»† THá»NG: ÄÃ‚Y LÃ€ LÆ¯á»¢T CUá»I CÃ™NG (lÆ°á»£t {current_turn}/{max_turns}) ==\n"
-            "Cuá»™c gá»i sáº¯p káº¿t thÃºc. HÃ£y Ä‘Æ°a ra pháº£n há»“i cuá»‘i cÃ¹ng má»™t cÃ¡ch Tá»° NHIÃŠN "
-            "(chá»‘t deal, tá»« chá»‘i dá»©t khoÃ¡t, hoáº·c háº¹n lá»‹ch cá»¥ thá»ƒ) Ä‘á»ƒ káº¿t thÃºc cuá»™c trÃ² chuyá»‡n. "
-            "KHÃ”NG kÃ©o dÃ i thÃªm."
+            f"\n\n== HỆ THỐNG: ĐÂY LÀ LƯỢT CUỐI CÙNG (lượt {current_turn}/{max_turns}) ==\n"
+            "Cuộc gọi sắp kết thúc. Hãy đưa ra phản hồi cuối cùng một cách TỰ NHIÊN "
+            "(chốt deal, từ chối dứt khoát, hoặc hẹn lịch cụ thể) để kết thúc cuộc trò chuyện. "
+            "KHÔNG kéo dài thêm."
         )
 
     # Build transcript
@@ -447,13 +302,7 @@ def generate_customer_turn_web(
         "Respond as the buyer JSON only."
     )
 
-    data = _chat_json(
-        system=system,
-        user=user_payload,
-        temperature=0.7,
-        model_name=llm_model,
-        provider=llm_provider,
-    )
+    data = _chat_json(system=system, user=user_payload, temperature=0.7)
     return {
         "customer_message": str(data.get("customer_message", "")).strip(),
         "session_should_end": bool(data.get("session_should_end", False)),
@@ -490,15 +339,13 @@ def _validate_improvements(
 
 def generate_evaluation_web(
     *,
-    llm_provider: str | None = None,
-    llm_model: str | None = None,
     messages: list[dict[str, str]],
     scenario_title: str,
     scenario_description: str,
     customer_persona: str,
     document_contents: str | None = None,
 ) -> dict[str, Any]:
-    """Evaluate for Web App â€” 6 criteria + improvements + top_3_tips.
+    """Evaluate for Web App — 6 criteria + improvements + top_3_tips.
 
     Includes 3-layer anti-hallucination:
     - Layer 1: LLM generates structured JSON
@@ -513,13 +360,13 @@ def generate_evaluation_web(
             transcript_lines.append(f"Sales: {m['content']}")
             sales_messages.append(m["content"].strip())
         else:
-            transcript_lines.append(f"KhÃ¡ch hÃ ng: {m['content']}")
+            transcript_lines.append(f"Khách hàng: {m['content']}")
     transcript = "\n".join(transcript_lines) if transcript_lines else "(empty)"
 
     user_payload = (
-        f"Ká»‹ch báº£n: {scenario_title}\n"
-        f"MÃ´ táº£: {scenario_description}\n"
-        f"TÃ­nh cÃ¡ch khÃ¡ch: {customer_persona}\n\n"
+        f"Kịch bản: {scenario_title}\n"
+        f"Mô tả: {scenario_description}\n"
+        f"Tính cách khách: {customer_persona}\n\n"
         f"--- BEGIN TRANSCRIPT ---\n{transcript}\n--- END TRANSCRIPT ---"
     )
 
@@ -527,13 +374,19 @@ def generate_evaluation_web(
     eval_system = EVALUATOR_SYSTEM_PROMPT_WEB
     if document_contents:
         eval_system += (
-            "\n\n== TÃ€I LIá»†U THAM CHIáº¾U (QUY TRÃŒNH BÃN HÃ€NG / THÃ”NG TIN Sáº¢N PHáº¨M) ==\n"
-            f"{document_contents}\n\n"
-            "HÆ¯á»šNG DáºªN Sá»¬ Dá»¤NG TÃ€I LIá»†U KHI CHáº¤M ÄIá»‚M:\n"
-            "- Cháº¥m `process_adherence` dá»±a trÃªn QUY TRÃŒNH THá»°C Táº¾ trong tÃ i liá»‡u (náº¿u cÃ³), khÃ´ng pháº£i quy trÃ¬nh chung chung.\n"
-            "- Náº¿u Sales nÃ³i SAI thÃ´ng tin sáº£n pháº©m so vá»›i tÃ i liá»‡u, TRá»ª Náº¶NG Ä‘iá»ƒm `confidence` vÃ  ghi rÃµ lá»—i.\n"
-            "- á»ž pháº§n `improvements`, Æ¯U TIÃŠN dÃ¹ng cÃ¢u máº«u tá»« tÃ i liá»‡u lÃ m `ai_suggestion` náº¿u phÃ¹ há»£p.\n"
-            "- á»ž pháº§n `top_3_tips`, liÃªn há»‡ vá»›i cÃ¡c bÆ°á»›c cá»¥ thá»ƒ trong tÃ i liá»‡u thay vÃ¬ khuyÃªn chung."
+            "\n\n== TÀI LIỆU GỐC DOANH NGHIỆP (MASSIVE CONTEXT — ĐỌC TOÀN BỘ) ==\n"
+            f"{document_contents}\n"
+            "== HẾT TÀI LIỆU GỐC ==\n\n"
+            "== HƯỚNG DẪN CHẤM ĐIỂM VỚI SOURCE GROUNDING (CỰC KỲ QUAN TRỌNG) ==\n"
+            "Bạn PHẢI đối chiếu TỪNG CÂU của Sales với tài liệu gốc ở trên.\n"
+            "1. Nếu Sales nói SAI giá, SAI tính năng, SAI thông số so với tài liệu → TRỪ NẶNG `confidence`.\n"
+            "2. Trong phần `improvements`, thêm trường `source_citation` cho mỗi lỗi:\n"
+            "   - Trích dẫn NGUYÊN VĂN phần/mục trong tài liệu mà Sales nói sai.\n"
+            "   - VD: source_citation = \"[Bảng Giá 2024] Gói Pro: 500k/tháng — Sales nói sai 400k\"\n"
+            "   - Nếu không liên quan tài liệu → source_citation = null\n"
+            "3. Chấm `process_adherence` dựa trên QUY TRÌNH THỰC TẾ trong tài liệu.\n"
+            "4. Ở `ai_suggestion`, ƯU TIÊN dùng câu mẫu/script từ tài liệu nếu phù hợp.\n"
+            "5. Ở `top_3_tips`, liên hệ với các bước cụ thể trong tài liệu thay vì khuyên chung.\n"
         )
 
     # === LAYER 1: Call LLM ===
@@ -541,8 +394,6 @@ def generate_evaluation_web(
         system=eval_system,
         user=user_payload,
         temperature=0.3,
-        model_name=llm_model,
-        provider=llm_provider,
     )
 
     # === LAYER 2: Validate improvements ===
@@ -551,28 +402,22 @@ def generate_evaluation_web(
 
     discarded_count = len(raw_improvements) - len(validated_improvements)
     if discarded_count > 0:
-        print(f"[evaluate_web] âš ï¸ Discarded {discarded_count}/{len(raw_improvements)} hallucinations")
+        print(f"[evaluate_web] ⚠️ Discarded {discarded_count}/{len(raw_improvements)} hallucinations")
 
     # === LAYER 3: Auto-retry if ALL discarded ===
     if raw_improvements and not validated_improvements:
-        print("[evaluate_web] ðŸ”„ All improvements discarded â†’ Auto-retry...")
+        print("[evaluate_web] 🔄 All improvements discarded → Auto-retry...")
         retry_system = (
             EVALUATOR_SYSTEM_PROMPT_WEB
-            + "\n\n== âš ï¸ Cáº¢NH BÃO NGHIÃŠM TRá»ŒNG Tá»ª Há»† THá»NG ==\n"
-            "Láº¦N TRÆ¯á»šC Báº N ÄÃƒ TRáº¢ Vá»€ CÃ‚U Bá»ŠA (HALLUCINATION) â€” Táº¤T Cáº¢ Äá»€U Bá»Š LOáº I.\n"
-            "Há»‡ thá»‘ng Ä‘Ã£ verify tá»«ng cÃ¢u báº¡n tráº£ vá» vÃ  KHÃ”NG TÃŒM THáº¤Y cÃ¢u nÃ o trong transcript thá»±c táº¿.\n"
-            "QUY Táº®C TUYá»†T Äá»I Láº¦N NÃ€Y:\n"
-            "- Báº¡n CHá»ˆ Ä‘Æ°á»£c trÃ­ch xuáº¥t NGUYÃŠN VÄ‚N tá»« pháº§n \"Sales: ...\" trong transcript.\n"
-            "- KHÃ”NG Ä‘Æ°á»£c tá»± táº¡o cÃ¢u, KHÃ”NG paraphrase, KHÃ”NG suy luáº­n.\n"
-            "- Náº¿u khÃ´ng cÃ³ cÃ¢u nÃ o cáº§n cáº£i thiá»‡n â†’ tráº£ Ä‘Ãºng: improvements: []"
+            + "\n\n== ⚠️ CẢNH BÁO NGHIÊM TRỌNG TỪ HỆ THỐNG ==\n"
+            "LẦN TRƯỚC BẠN ĐÃ TRẢ VỀ CÂU BỊA (HALLUCINATION) — TẤT CẢ ĐỀU BỊ LOẠI.\n"
+            "Hệ thống đã verify từng câu bạn trả về và KHÔNG TÌM THẤY câu nào trong transcript thực tế.\n"
+            "QUY TẮC TUYỆT ĐỐI LẦN NÀY:\n"
+            "- Bạn CHỈ được trích xuất NGUYÊN VĂN từ phần \"Sales: ...\" trong transcript.\n"
+            "- KHÔNG được tự tạo câu, KHÔNG paraphrase, KHÔNG suy luận.\n"
+            "- Nếu không có câu nào cần cải thiện → trả đúng: improvements: []"
         )
-        retry_raw = _chat_json(
-            system=retry_system,
-            user=user_payload,
-            temperature=0.3,
-            model_name=llm_model,
-            provider=llm_provider,
-        )
+        retry_raw = _chat_json(system=retry_system, user=user_payload, temperature=0.3)
         validated_improvements = _validate_improvements(
             retry_raw.get("improvements", []), sales_messages
         )
@@ -585,10 +430,10 @@ def generate_evaluation_web(
         if isinstance(entry, dict):
             rubric[key] = {
                 "score": _clamp_int_score(entry.get("score", 5), default=5),
-                "reason": str(entry.get("reason", "KhÃ´ng cÃ³ nháº­n xÃ©t")),
+                "reason": str(entry.get("reason", "Không có nhận xét")),
             }
         else:
-            rubric[key] = {"score": _clamp_int_score(entry, default=5), "reason": "KhÃ´ng cÃ³ nháº­n xÃ©t"}
+            rubric[key] = {"score": _clamp_int_score(entry, default=5), "reason": "Không có nhận xét"}
 
     # Compute overall score (0-100 scale)
     scores = [v["score"] for v in rubric.values()]
@@ -597,7 +442,7 @@ def generate_evaluation_web(
     # Ensure top_3_tips has exactly 3 items
     tips = list(raw.get("top_3_tips", []))[:3]
     while len(tips) < 3:
-        tips.append("Luyá»‡n táº­p thÃªm Ä‘á»ƒ cáº£i thiá»‡n ká»¹ nÄƒng bÃ¡n hÃ ng.")
+        tips.append("Luyện tập thêm để cải thiện kỹ năng bán hàng.")
 
     return {
         "overall_score": overall_score,
@@ -608,75 +453,146 @@ def generate_evaluation_web(
 
 
 
-def generate_scenario_from_doc(
-    *,
-    document_contents: str,
-    llm_provider: str | None = None,
-    llm_model: str | None = None,
-) -> dict[str, Any]:
+def generate_scenario_from_doc(*, document_contents: str) -> dict[str, Any]:
     """Auto-generate scenario details from an uploaded document."""
     user_payload = (
-        "ÄÃ¢y lÃ  ná»™i dung tÃ i liá»‡u cá»§a tÃ´i:\n"
+        "Đây là nội dung tài liệu của tôi:\n"
         "--- BEGIN DOCUMENT ---\n"
         f"{document_contents}\n"
         "--- END DOCUMENT ---\n\n"
-        "HÃ£y táº¡o ká»‹ch báº£n JSON theo hÆ°á»›ng dáº«n."
+        "Hãy tạo kịch bản JSON theo hướng dẫn."
     )
     
     data = _chat_json(
         system=GENERATE_SCENARIO_SYSTEM_PROMPT,
         user=user_payload,
         temperature=0.7,
-        model_name=llm_model,
-        provider=llm_provider,
     )
     
     return {
-        "title": str(data.get("title", "Ká»‹ch báº£n tá»± Ä‘á»™ng")),
-        "description": str(data.get("description", "KhÃ´ng cÃ³ mÃ´ táº£")),
-        "company_context": str(data.get("company_context", "KhÃ´ng cÃ³ tÃ³m táº¯t")),
+        "title": str(data.get("title", "Kịch bản tự động")),
+        "description": str(data.get("description", "Không có mô tả")),
+        "company_context": str(data.get("company_context", "Không có tóm tắt")),
         "customer_persona": str(data.get("customer_persona", "friendly_indecisive")),
+    }
+
+
+def generate_deep_read(*, raw_markdown: str) -> dict[str, Any]:
+    """Phase 2 — NotebookLM Deep Read.
+
+    Sends the FULL document (Massive Context) to a high-capability LLM
+    to extract structured knowledge (CheatSheet + Scenarios).
+
+    Uses a dedicated model (Gemini 2.5 Pro or equivalent) for large
+    context window support. Falls back to default model if needed.
+    """
+    user_payload = (
+        "=== TÀI LIỆU DOANH NGHIỆP (ĐỌC TOÀN BỘ) ===\n"
+        f"{raw_markdown}\n"
+        "=== HẾT TÀI LIỆU ===\n\n"
+        "Hãy phân tích tài liệu trên và trả về JSON theo đúng schema đã hướng dẫn.\n"
+        "Lưu ý: GIÁ phải CHÍNH XÁC 100% như trong tài liệu. KHÔNG được bịa."
+    )
+
+    # Use a high-context model for Deep Read (Gemini 2.5 Pro preferred)
+    deep_read_model = SALES_LLM_MODEL
+    client = _client()
+
+    # Prefer Gemini 2.5 Pro for massive context (1M tokens)
+    if OPEN_ROUTER_API:
+        deep_read_model = "google/gemini-2.5-flash"
+    elif GEMINI_API_KEY:
+        deep_read_model = "gemini-2.5-flash"
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[deep-read] Using model: {deep_read_model}, doc length: {len(raw_markdown)} chars")
+
+    completion = client.chat.completions.create(
+        model=deep_read_model,
+        temperature=0.4,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": MASSIVE_CONTEXT_EXTRACTION_PROMPT},
+            {"role": "user", "content": user_payload},
+        ],
+    )
+    raw = completion.choices[0].message.content or "{}"
+    data = json.loads(raw)
+
+    # Validate structure
+    cheat_sheet = data.get("cheat_sheet", {})
+    scenarios = data.get("scenarios", [])
+
+    if not scenarios:
+        logger.warning("[deep-read] LLM returned no scenarios, adding fallback")
+        scenarios = [{
+            "title": "Kịch bản tổng quát",
+            "customer_persona": "Khách hàng tiềm năng quan tâm đến sản phẩm",
+            "hidden_agenda": "Đang so sánh với giải pháp khác",
+            "difficulty": "medium",
+            "expected_objections": ["Giá cao", "Cần thời gian suy nghĩ"],
+        }]
+
+    return {
+        "cheat_sheet": cheat_sheet,
+        "scenarios": scenarios,
     }
 
 
 async def generate_customer_turn_voice_stream(
     *,
-    llm_provider: str | None = None,
-    llm_model: str | None = None,
     customer_persona: str,
     scenario_title: str,
     scenario_description: str,
     company_context: str | None,
+    cheat_sheet: str | None = None,
     conversation_history: list[dict[str, str]],
     last_user_message: str,
     current_turn: int,
     max_turns: int,
     time_remaining_seconds: int | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Voice-optimized streaming customer turn. Yields sentences as they are generated."""
+    """Voice-optimized streaming customer turn. Yields sentences as they are generated.
+
+    Phase 3 upgrade: Accepts `cheat_sheet` (compact JSON from Phase 2 Deep Read)
+    instead of raw company_context. This keeps the prompt small for low TTFT
+    while giving the AI accurate product knowledge, brand voice, and objections.
+    """
     
     # Prompt is concise, not JSON mode, optimized for voice latency.
     time_instruction = ""
     if time_remaining_seconds is not None and time_remaining_seconds <= 60:
-        time_instruction = f" CHá»ˆ CÃ’N {time_remaining_seconds} GIÃ‚Y, hÃ£y chá»§ Ä‘á»™ng nháº¯c Ä‘áº¿n viá»‡c sáº¯p háº¿t thá»i gian vÃ  háº¹n lá»‹ch tiáº¿p theo Ä‘á»ƒ chá»‘t láº¡i cuá»™c gá»i."
+        time_instruction = f" CHỈ CÒN {time_remaining_seconds} GIÂY, hãy chủ động nhắc đến việc sắp hết thời gian và hẹn lịch tiếp theo để chốt lại cuộc gọi."
 
     system = (
-        f"Báº¡n lÃ  khÃ¡ch hÃ ng trong cuá»™c gá»i luyá»‡n sales B2B. Ká»‹ch báº£n: {scenario_title}.\n"
-        f"TÃ­nh cÃ¡ch: {customer_persona}.\n"
+        f"Bạn là khách hàng trong cuộc gọi luyện sales B2B. Kịch bản: {scenario_title}.\n"
+        f"Tính cách: {customer_persona}.\n"
         f"{time_instruction}\n\n"
-        "QUY Táº®C PHáº¢N Há»’I QUA GIá»ŒNG NÃ“I:\n"
-        "- Pháº£n há»“i cá»±c ká»³ tá»± nhiÃªn, cÃ³ cáº£m xÃºc vÃ  Ä‘iá»‡u bá»™ nhÆ° ngÆ°á»i tháº­t Ä‘ang nghe Ä‘iá»‡n thoáº¡i.\n"
-        "- Äá»™ dÃ i vá»«a pháº£i (khoáº£ng 2-4 cÃ¢u), Ä‘á»§ Ä‘á»ƒ pháº£n biá»‡n logic hoáº·c thá»ƒ hiá»‡n thÃ¡i Ä‘á»™, nhÆ°ng khÃ´ng thao thao báº¥t tuyá»‡t.\n"
-        "- HÃ£y dÃ¹ng cÃ¡c tá»« ngá»¯ Ä‘á»i thÆ°á»ng, thá»‰nh thoáº£ng cÃ³ thá»ƒ ngáº­p ngá»«ng (á», á»«m) hoáº·c cáº¯t ngang náº¿u bá»±c mÃ¬nh.\n"
-        "- Tuyá»‡t Ä‘á»‘i KHÃ”NG gáº¡ch Ä‘áº§u dÃ²ng, KHÃ”NG dÃ¹ng markdown, KHÃ”NG dÃ¹ng vÄƒn viáº¿t.\n"
-        "- KHÃ”NG dÃ¹ng JSON, chá»‰ tráº£ vá» chá»¯.\n"
+        "QUY TẮC PHẢN HỒI QUA GIỌNG NÓI:\n"
+        "- Phản hồi cực kỳ tự nhiên, có cảm xúc và điệu bộ như người thật đang nghe điện thoại.\n"
+        "- Độ dài vừa phải (khoảng 2-4 câu), đủ để phản biện logic hoặc thể hiện thái độ, nhưng không thao thao bất tuyệt.\n"
+        "- Hãy dùng các từ ngữ đời thường, thỉnh thoảng có thể ngập ngừng (ờ, ừm) hoặc cắt ngang nếu bực mình.\n"
+        "- Tuyệt đối KHÔNG gạch đầu dòng, KHÔNG dùng markdown, KHÔNG dùng văn viết.\n"
+        "- KHÔNG dùng JSON, chỉ trả về chữ.\n"
     )
-    
-    if company_context:
-        system += f"\nSáº£n pháº©m Sales Ä‘ang bÃ¡n:\n{company_context[:300]}\n(DÃ¹ng thÃ´ng tin nÃ y Ä‘á»ƒ báº¯t báº», khÃ´ng tá»± khai ra).\n"
+
+    # Phase 3: Prefer cheat_sheet (compact, structured) over raw company_context
+    if cheat_sheet:
+        system += (
+            "\n== KIẾN THỨC SẢN PHẨM (CHEAT SHEET — dùng để bắt bẻ Sales) ==\n"
+            f"{cheat_sheet}\n"
+            "QUY TẮC SỬ DỤNG CHEAT SHEET:\n"
+            "- Nếu Sales nói SAI giá, SAI tính năng → phản bác ngay: 'Ơ, anh đọc trên web thấy giá khác mà?'\n"
+            "- Dùng common_objections để từ chối tự nhiên, KHÔNG tự bịa lý do.\n"
+            "- Nếu có brand_voice → bắt chước cách xưng hô của doanh nghiệp.\n"
+            "- TUYỆT ĐỐI KHÔNG tự khai ra thông tin, chỉ dùng khi Sales nói sai hoặc cần phản biện.\n"
+        )
+    elif company_context:
+        system += f"\nSản phẩm Sales đang bán:\n{company_context[:300]}\n(Dùng thông tin này để bắt bẻ, không tự khai ra).\n"
 
     if current_turn >= max_turns:
-        system += "\nLÆ¯á»¢T CUá»I: ÄÆ°a ra quyáº¿t Ä‘á»‹nh (chá»‘t deal / tá»« chá»‘i) má»™t cÃ¡ch dá»©t khoÃ¡t.\n"
+        system += "\nLƯỢT CUỐI: Đưa ra quyết định (chốt deal / từ chối) một cách dứt khoát.\n"
 
     transcript_lines: list[str] = []
     # Take only the last 4 turns to reduce prompt context and speed up TTFT (Time To First Token)
@@ -687,66 +603,40 @@ async def generate_customer_turn_voice_stream(
     transcript = "\n".join(transcript_lines) if transcript_lines else "(no prior turns)"
 
     user_payload = (
-        f"Lá»‹ch sá»­:\n{transcript}\n\n"
-        f"Sales vá»«a nÃ³i:\n{last_user_message}\n\n"
-        "HÃ£y pháº£n há»“i ngáº¯n gá»n:"
+        f"Lịch sử:\n{transcript}\n\n"
+        f"Sales vừa nói:\n{last_user_message}\n\n"
+        "Hãy phản hồi ngắn gọn:"
     )
 
-    model_name, provider = _resolve_model_and_provider(
-        model_name=llm_model,
-        provider=llm_provider,
-        default_model=VOICE_LLM_MODEL,
-        default_provider=VOICE_LLM_PROVIDER,
+    # TIP-003 INSTRUMENTATION - REMOVE AFTER: measure async client creation
+    import time as _time_tip003
+    _t_client_start = _time_tip003.perf_counter()
+    client = _async_client()
+    _t_client_end = _time_tip003.perf_counter()
+    print(f"[LATENCY][TIP-003] _async_client() creation: {(_t_client_end - _t_client_start)*1000:.0f}ms")
+    
+    # Auto fallback to Gemini model if overriding OpenAI's default for speed
+    import os
+    if GROQ_API_KEY:
+        model_name = os.getenv("VOICE_LLM_MODEL", "llama-3.3-70b-versatile")
+    else:
+        model_name = os.getenv("VOICE_LLM_MODEL", "google/gemini-2.5-flash-lite") if OPEN_ROUTER_API else SALES_LLM_MODEL
+    
+    # TIP-003 INSTRUMENTATION - REMOVE AFTER: measure API stream creation
+    _t_api_start = _time_tip003.perf_counter()
+    print(f"[LATENCY][TIP-003] calling model={model_name} stream=True")
+    response_stream = await client.chat.completions.create(
+        model=model_name,
+        temperature=0.6,
+        max_tokens=80, # Prevent long rambling
+        stream=True,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_payload},
+        ],
     )
-
-    priority = ["gpt", "gemini", "grok", "groq", "openrouter"]
-    tried: set[str] = set()
-    current_provider = provider
-    response_stream = None
-
-    for backoff in [0, 1, 2]:
-        if backoff > 0:
-            import asyncio
-            await asyncio.sleep(backoff)
-        tried.add(current_provider)
-        client = _selected_async_client(current_provider)
-        try:
-            response_stream = await client.chat.completions.create(
-                model=model_name,
-                temperature=0.6,
-                max_tokens=80,
-                stream=True,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_payload},
-                ],
-            )
-            break
-        except Exception as exc:
-            is_retryable = any(
-                m in str(exc) or m in type(exc).__name__
-                for m in ["502", "503", "504", "InternalServerError", "RateLimitError", "timeout", "TIMEOUT"]
-            )
-            if not is_retryable:
-                raise RuntimeError(
-                    f"Voice LLM error ({current_provider}, model={model_name}): {exc}"
-                ) from exc
-            # Try next provider with valid key
-            next_provider = next((p for p in priority if p not in tried), None)
-            if next_provider:
-                api_key, _, next_model, _ = _provider_config(next_provider)
-                if api_key:
-                    print(f"[llm] voice fallback: {current_provider} → {next_provider}")
-                    model_name = next_model
-                    current_provider = next_provider
-                    response_stream = None
-                    continue
-            raise RuntimeError(
-                f"Voice LLM error (all providers failed after retry): {exc}"
-            ) from exc
-
-    if response_stream is None:
-        raise RuntimeError("Voice LLM: no stream available.")
+    _t_api_end = _time_tip003.perf_counter()
+    print(f"[LATENCY][TIP-003] API stream create: {(_t_api_end - _t_api_start)*1000:.0f}ms (model={model_name})")
 
     buffer = ""
     sentence_end_chars = {'.', '!', '?', '\n'}

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Pydantic request/response models for the Sale Train Agent FastAPI surface.
 """
 
@@ -64,38 +64,38 @@ class ChatResponse(BaseModel):
 class EvaluationPayload(BaseModel):
     """
     Strict evaluation rubric for _evaluation_node / GET /feedback.
-    Scores are 1â€“10 per criterion; overall_score is the arithmetic mean (computed, not LLM-supplied).
+    Scores are 1–10 per criterion; overall_score is the arithmetic mean (computed, not LLM-supplied).
     """
 
     understanding_needs: int = Field(
         ...,
         ge=1,
         le=10,
-        description="Hiá»ƒu nhu cáº§u â€” discovery, listening, acknowledging pain.",
+        description="Hiểu nhu cầu — discovery, listening, acknowledging pain.",
     )
     response_structure: int = Field(
         ...,
         ge=1,
         le=10,
-        description="Cáº¥u trÃºc tráº£ lá»i â€” clarity, concision, professionalism.",
+        description="Cấu trúc trả lời — clarity, concision, professionalism.",
     )
     objection_handling: int = Field(
         ...,
         ge=1,
         le=10,
-        description="Xá»­ lÃ½ pháº£n Ä‘á»‘i â€” empathy, reframe, non-defensive.",
+        description="Xử lý phản đối — empathy, reframe, non-defensive.",
     )
     persuasiveness: int = Field(
         ...,
         ge=1,
         le=10,
-        description="Thuyáº¿t phá»¥c â€” value tied to the buyer's problems.",
+        description="Thuyết phục — value tied to the buyer's problems.",
     )
     next_steps: int = Field(
         ...,
         ge=1,
         le=10,
-        description="BÆ°á»›c tiáº¿p theo â€” close / micro-commitment.",
+        description="Bước tiếp theo — close / micro-commitment.",
     )
 
     strengths: list[str] = Field(
@@ -151,7 +151,7 @@ class NextLevelResponse(BaseModel):
 
 
 # ================================================================
-# Web App Schemas â€” Stateless endpoints for Next.js integration
+# Web App Schemas — Stateless endpoints for Next.js integration
 # ================================================================
 
 class MessageTurnSchema(BaseModel):
@@ -161,32 +161,30 @@ class MessageTurnSchema(BaseModel):
 
 
 class WebChatRequest(BaseModel):
-    """Request from Next.js â€” stateless, no SESSION_STORE."""
+    """Request from Next.js — stateless, no SESSION_STORE."""
     message: str = Field(..., min_length=1, max_length=16000)
-    llm_provider: str | None = Field(default=None, description="auto, openrouter, gpt, gemini, grok")
-    llm_model: str | None = Field(default=None, description="Override model for this request")
     conversation_history: list[MessageTurnSchema] = Field(default_factory=list)
-    scenario_title: str = Field(default="Ká»‹ch báº£n luyá»‡n táº­p")
+    scenario_title: str = Field(default="Kịch bản luyện tập")
     scenario_description: str = Field(default="")
     customer_persona: str = Field(..., min_length=1, description="Full persona text from Supabase DB")
     company_context: str | None = None
-    document_contents: str | None = Field(default=None, description="Ná»™i dung tÃ i liá»‡u sáº£n pháº©m/quy trÃ¬nh bÃ¡n hÃ ng (text, concat tá»« nhiá»u file)")
+    document_contents: str | None = Field(default=None, description="Nội dung tài liệu sản phẩm/quy trình bán hàng (text, concat từ nhiều file)")
     current_turn: int = Field(default=1, ge=1)
     max_turns: int = Field(default=12, ge=1, le=50)
-    ai_tone: str = Field(default="neutral", description="ThÃ¡i Ä‘á»™ cá»§a AI: friendly, neutral, harsh")
-    follow_up_depth: str = Field(default="moderate", description="Má»©c Ä‘á»™ truy váº¥n: light, moderate, deep")
+    ai_tone: str = Field(default="neutral", description="Thái độ của AI: friendly, neutral, harsh")
+    follow_up_depth: str = Field(default="moderate", description="Mức độ truy vấn: light, moderate, deep")
     time_remaining_seconds: int | None = None
 
 
 class WebChatResponse(BaseModel):
-    """Response to Next.js â€” structured customer reply."""
+    """Response to Next.js — structured customer reply."""
     customer_reply: str
     session_should_end: bool
     end_reason: str | None = None
     turn_count: int
     audio_url: str | None = Field(
         default=None, 
-        description="ÄÆ°á»ng dáº«n Ä‘áº¿n file Ã¢m thanh pháº£n há»“i tá»« FPT.AI TTS."
+        description="Đường dẫn đến file âm thanh phản hồi từ FPT.AI TTS."
     )
 
 
@@ -197,10 +195,10 @@ class RubricScoreSchema(BaseModel):
 
 
 class ImprovementSchema(BaseModel):
-    """A sales sentence that needs improvement â€” verbatim from transcript."""
+    """A sales sentence that needs improvement — verbatim from transcript."""
     user_sentence: str
     ai_suggestion: str
-    playbook_source: str | None = Field(default=None, description="TrÃ­ch nguá»“n tá»« tÃ i liá»‡u playbook/sáº£n pháº©m (náº¿u cÃ³)")
+    playbook_source: str | None = Field(default=None, description="Trích nguồn từ tài liệu playbook/sản phẩm (nếu có)")
 
 
 class WebRubricBreakdown(BaseModel):
@@ -214,18 +212,16 @@ class WebRubricBreakdown(BaseModel):
 
 
 class WebEvaluateRequest(BaseModel):
-    llm_provider: str | None = Field(default=None, description="auto, openrouter, gpt, gemini, grok")
-    llm_model: str | None = Field(default=None, description="Override model for this request")
-    """Request from Next.js â€” Evaluate a completed session."""
-    scenario_title: str = Field(default="Ká»‹ch báº£n luyá»‡n táº­p")
+    """Request from Next.js — Evaluate a completed session."""
+    scenario_title: str = Field(default="Kịch bản luyện tập")
     scenario_description: str = Field(default="")
-    customer_persona: str = Field(default="KhÃ¡ch hÃ ng bÃ¬nh thÆ°á»ng")
-    document_contents: str | None = Field(default=None, description="Ná»™i dung tÃ i liá»‡u sáº£n pháº©m/quy trÃ¬nh bÃ¡n hÃ ng")
+    customer_persona: str = Field(default="Khách hàng bình thường")
+    document_contents: str | None = Field(default=None, description="Nội dung tài liệu sản phẩm/quy trình bán hàng")
     messages: list[MessageTurnSchema] = Field(..., min_length=1)
 
 
 class WebEvaluateResponse(BaseModel):
-    """Response to Next.js â€” 6-criteria evaluation + improvements + tips."""
+    """Response to Next.js — 6-criteria evaluation + improvements + tips."""
     overall_score: float
     rubric_breakdown: WebRubricBreakdown
     improvements: list[ImprovementSchema] = Field(default_factory=list)
@@ -233,16 +229,82 @@ class WebEvaluateResponse(BaseModel):
 
 
 class WebGenerateScenarioRequest(BaseModel):
-    llm_provider: str | None = Field(default=None, description="auto, openrouter, gpt, gemini, grok")
-    llm_model: str | None = Field(default=None, description="Override model for this request")
     """Request from Next.js to auto-generate scenario info from a document."""
-    document_contents: str = Field(..., min_length=10, description="Ná»™i dung file (Ä‘Ã£ chuyá»ƒn thÃ nh text)")
+    document_contents: str = Field(..., min_length=10, description="Nội dung file (đã chuyển thành text)")
 
 
 class WebGenerateScenarioResponse(BaseModel):
     """Response with generated fields for the Scenario form."""
-    title: str = Field(..., description="TÃªn ká»‹ch báº£n ngáº¯n gá»n, áº¥n tÆ°á»£ng")
-    description: str = Field(..., description="MÃ´ táº£ bá»‘i cáº£nh Ä‘á»ƒ táº­p luyá»‡n")
-    company_context: str = Field(..., description="TÃ³m táº¯t thÃ´ng tin sáº£n pháº©m dÃ¹ng lÃ m background")
-    customer_persona: str = Field(..., description="Má»™t trong 3 ID: friendly_indecisive, detail_oriented, busy_skeptic")
+    title: str = Field(..., description="Tên kịch bản ngắn gọn, ấn tượng")
+    description: str = Field(..., description="Mô tả bối cảnh để tập luyện")
+    company_context: str = Field(..., description="Tóm tắt thông tin sản phẩm dùng làm background")
+    customer_persona: str = Field(..., description="Một trong 3 ID: friendly_indecisive, detail_oriented, busy_skeptic")
+
+
+# ================================================================
+# Document Ingestion Schemas — Phase 1: Hybrid NotebookLM
+# ================================================================
+
+class ParseDocumentResponse(BaseModel):
+    """Response from /web/parse-document — Clean Markdown + metadata."""
+    document_id: str = Field(..., description="UUID cho tài liệu vừa được xử lý")
+    filename: str = Field(..., description="Tên file gốc do user upload")
+    format: str = Field(..., description="Định dạng đã nhận diện: pdf, docx, xlsx, csv, txt")
+    raw_markdown: str = Field(..., description="Nội dung tài liệu đã chuyển đổi sang Markdown sạch")
+    token_count_estimate: int = Field(..., description="Ước tính số token (~0.75 words/token)")
+
+
+# ================================================================
+# Deep Read Schemas — Phase 2: NotebookLM Knowledge Extraction
+# ================================================================
+
+class ProductInfo(BaseModel):
+    """Thông tin sản phẩm/dịch vụ được bóc tách từ tài liệu."""
+    name: str = Field(..., description="Tên sản phẩm/dịch vụ")
+    price: str = Field(default="", description="Giá bán (nếu có)")
+    key_features: list[str] = Field(default_factory=list, description="Tính năng nổi bật")
+    limitations: list[str] = Field(default_factory=list, description="Hạn chế/điểm yếu (nếu phát hiện)")
+
+
+class BrandVoice(BaseModel):
+    """Văn phong giao tiếp đặc trưng của doanh nghiệp."""
+    tone: str = Field(..., description="Mô tả văn phong chung: chuyên nghiệp, thân thiện, ...")
+    pronouns: str = Field(default="", description="Cách xưng hô: Dạ/Anh Chị, bạn/mình, ...")
+    forbidden_words: list[str] = Field(default_factory=list, description="Từ/cụm từ KHÔNG được dùng")
+
+
+class CommonObjection(BaseModel):
+    """Lời từ chối thường gặp + cách xử lý chuẩn."""
+    trigger: str = Field(..., description="Câu/tình huống từ chối của khách")
+    expected_response: str = Field(..., description="Cách xử lý chuẩn theo playbook công ty")
+
+
+class CheatSheet(BaseModel):
+    """Bản tóm tắt kiến thức cốt lõi — inject vào Voice AI."""
+    products: list[ProductInfo] = Field(default_factory=list)
+    unique_selling_points: list[str] = Field(default_factory=list, description="Lợi điểm bán hàng độc nhất (USP)")
+    brand_voice: BrandVoice | None = Field(default=None, description="Văn phong (nếu phát hiện từ log chat)")
+    common_objections: list[CommonObjection] = Field(default_factory=list, description="Lời từ chối thật + playbook")
+    competitors_mentioned: list[str] = Field(default_factory=list, description="Tên đối thủ được nhắc tới")
+
+
+class GeneratedScenario(BaseModel):
+    """Kịch bản luyện tập được AI sinh ra từ tài liệu."""
+    title: str = Field(..., description="Tên kịch bản ngắn gọn")
+    customer_persona: str = Field(..., description="Mô tả chân dung khách hàng")
+    hidden_agenda: str = Field(default="", description="Mục tiêu ẩn của khách hàng")
+    difficulty: Literal["easy", "medium", "hard"] = Field(default="medium")
+    expected_objections: list[str] = Field(default_factory=list, description="Lời từ chối có thể xuất hiện")
+
+
+class DeepReadResponse(BaseModel):
+    """Response from /web/deep-read — Phase 2 output."""
+    cheat_sheet: CheatSheet
+    scenarios: list[GeneratedScenario] = Field(default_factory=list, min_length=1)
+
+
+class DeepReadRequest(BaseModel):
+    """Request for /web/deep-read — Raw Markdown from Phase 1."""
+    raw_markdown: str = Field(..., min_length=10, description="Nội dung tài liệu dạng Markdown (từ Phase 1)")
+
 
