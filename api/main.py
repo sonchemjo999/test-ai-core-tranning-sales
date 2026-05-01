@@ -4,11 +4,20 @@ Sale Train Agent — FastAPI wrapper around the LangGraph sales simulator (MVP).
 
 from __future__ import annotations
 
+import os
 import re
 import uuid
 
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+
+_frontend_url = os.getenv("FRONTEND_URL", "")
+_allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+if _frontend_url:
+    _allowed_origins.append(_frontend_url)
+_railway_public_url = os.getenv("RAILWAY_PUBLIC_URL")
+if _railway_public_url:
+    _allowed_origins.append(_railway_public_url)
 
 from graph.graph import build_sales_graph
 from core.schemas import (
@@ -36,13 +45,9 @@ app = FastAPI(
     version="0.2.0",
 )
 
-# CORS — allow Next.js dev server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
