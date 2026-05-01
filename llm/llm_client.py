@@ -9,7 +9,7 @@ from typing import Any, AsyncGenerator
 
 from openai import OpenAI, AsyncOpenAI
 
-from core.config import OPENAI_API_KEY, SALES_LLM_MODEL, GEMINI_API_KEY, OPEN_ROUTER_API, GROQ_API_KEY
+from core.config import OPENAI_API_KEY, OPENAI_BASE_URL, SALES_LLM_MODEL, GEMINI_API_KEY, GEMINI_BASE_URL, OPEN_ROUTER_API, OPEN_ROUTER_BASE_URL, GROQ_API_KEY, GROQ_BASE_URL
 from core.schemas import EvaluationPayload
 from core.state import EvaluationResults, SalesSessionState
 from llm.prompts import (
@@ -26,7 +26,7 @@ from llm.prompts import (
 def _client() -> OpenAI:
     if OPEN_ROUTER_API:
         return OpenAI(
-            base_url="https://openrouter.ai/api/v1",
+            base_url=OPEN_ROUTER_BASE_URL,
             api_key=OPEN_ROUTER_API,
             default_headers={
                 "HTTP-Referer": "http://localhost:3000",
@@ -36,24 +36,24 @@ def _client() -> OpenAI:
     if GEMINI_API_KEY:
         return OpenAI(
             api_key=GEMINI_API_KEY,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+            base_url=GEMINI_BASE_URL,
         )
     if not OPENAI_API_KEY:
         raise RuntimeError(
             "Cần cấu hình OPENAI_API_KEY, GEMINI_API_KEY hoặc OPEN_ROUTER_API trong file .env."
         )
-    return OpenAI(api_key=OPENAI_API_KEY)
+    return OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
 
 
 def _async_client() -> AsyncOpenAI:
     if GROQ_API_KEY:
         return AsyncOpenAI(
-            base_url="https://api.groq.com/openai/v1",
+            base_url=GROQ_BASE_URL,
             api_key=GROQ_API_KEY,
         )
     if OPEN_ROUTER_API:
         return AsyncOpenAI(
-            base_url="https://openrouter.ai/api/v1",
+            base_url=OPEN_ROUTER_BASE_URL,
             api_key=OPEN_ROUTER_API,
             default_headers={
                 "HTTP-Referer": "http://localhost:3000",
@@ -63,13 +63,13 @@ def _async_client() -> AsyncOpenAI:
     if GEMINI_API_KEY:
         return AsyncOpenAI(
             api_key=GEMINI_API_KEY,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+            base_url=GEMINI_BASE_URL,
         )
     if not OPENAI_API_KEY:
         raise RuntimeError(
             "Cần cấu hình OPENAI_API_KEY, GEMINI_API_KEY hoặc OPEN_ROUTER_API trong file .env."
         )
-    return AsyncOpenAI(api_key=OPENAI_API_KEY)
+    return AsyncOpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
 
 
 def _chat_json(
