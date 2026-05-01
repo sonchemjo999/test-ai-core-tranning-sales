@@ -88,6 +88,15 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/")
+def root() -> dict[str, str]:
+    return {
+        "status": "ok",
+        "service": "Sale Train Agent API",
+        "health": "/health",
+    }
+
+
 @app.post("/init-session", response_model=InitSessionResponse)
 def init_session(body: InitSessionRequest) -> InitSessionResponse:
     session_id = str(uuid.uuid4())
