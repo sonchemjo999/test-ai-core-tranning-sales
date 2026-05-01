@@ -33,6 +33,11 @@ def _client() -> OpenAI:
                 "X-OpenRouter-Title": "A20-App",
             }
         )
+    if GROQ_API_KEY:
+        return OpenAI(
+            base_url=GROQ_BASE_URL,
+            api_key=GROQ_API_KEY,
+        )
     if GEMINI_API_KEY:
         return OpenAI(
             api_key=GEMINI_API_KEY,
@@ -40,7 +45,7 @@ def _client() -> OpenAI:
         )
     if not OPENAI_API_KEY:
         raise RuntimeError(
-            "Cần cấu hình OPENAI_API_KEY, GEMINI_API_KEY hoặc OPEN_ROUTER_API trong file .env."
+            "Cần cấu hình OPENAI_API_KEY, GEMINI_API_KEY, OPEN_ROUTER_API hoặc GROQ_API_KEY trong file .env."
         )
     return OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
 
@@ -67,7 +72,7 @@ def _async_client() -> AsyncOpenAI:
         )
     if not OPENAI_API_KEY:
         raise RuntimeError(
-            "Cần cấu hình OPENAI_API_KEY, GEMINI_API_KEY hoặc OPEN_ROUTER_API trong file .env."
+            "Cần cấu hình OPENAI_API_KEY, GEMINI_API_KEY, OPEN_ROUTER_API hoặc GROQ_API_KEY trong file .env."
         )
     return AsyncOpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
 
@@ -80,12 +85,13 @@ def _chat_json(
 ) -> dict[str, Any]:
     client = _client()
     
-    # Auto fallback to Gemini model if overriding OpenAI's default
-    model_name = SALES_LLM_MODEL
+    # Auto fallback to supported model if the selected one isn't compatible
     if OPEN_ROUTER_API and model_name.startswith("gpt") and not OPENAI_API_KEY:
         model_name = "google/gemini-2.5-flash-lite"
     elif GEMINI_API_KEY and model_name.startswith("gpt") and not OPENAI_API_KEY:
         model_name = "gemini-2.5-flash-lite"
+    elif GROQ_API_KEY and model_name.startswith("gpt") and not OPENAI_API_KEY:
+        model_name = "llama-3.3-70b-versatile"
 
     completion = client.chat.completions.create(
         model=model_name,
