@@ -4,22 +4,11 @@ Sale Train Agent — FastAPI wrapper around the LangGraph sales simulator (MVP).
 
 from __future__ import annotations
 
-import hashlib
-import os
 import re
 import uuid
 
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from core.config import AI_API_KEY, env_str
-
-_frontend_url = env_str("FRONTEND_URL").rstrip("/")
-_allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
-if _frontend_url:
-    _allowed_origins.append(_frontend_url)
-_railway_public_url = env_str("RAILWAY_PUBLIC_URL").rstrip("/")
-if _railway_public_url:
-    _allowed_origins.append(_railway_public_url)
 
 from graph.graph import build_sales_graph
 from core.schemas import (
@@ -47,25 +36,16 @@ app = FastAPI(
     version="0.2.0",
 )
 
+# CORS — allow Next.js dev server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)
-
-print(
-    "[startup] env-debug-v2",
-    {
-        "has_ai_api_key": bool(os.getenv("AI_API_KEY", "")),
-        "ai_api_key_len": len(os.getenv("AI_API_KEY", "")),
-        "configured_is_default": AI_API_KEY == "dev-secret-key-change-in-production",
-        "frontend_url": _frontend_url,
-        "allowed_origins": _allowed_origins,
-        "port": os.getenv("PORT", ""),
-        "railway_public_url": _railway_public_url,
-    },
 )
 
 SESSION_STORE: dict[str, SalesSessionState] = {}
@@ -101,42 +81,6 @@ def _normalize_slug(value: str) -> str:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/")
-def root() -> dict[str, str]:
-    return {
-        "status": "ok",
-        "service": "Sale Train Agent API",
-        "health": "/health",
-        "version": "env-debug-v2",
-    }
-
-
-def _fingerprint(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:10] if value else "empty"
-
-
-@app.get("/debug/env")
-def debug_env() -> dict[str, object]:
-    raw_ai_api_key = os.getenv("AI_API_KEY", "")
-    relevant_env_keys = sorted(
-        key
-        for key in os.environ
-        if any(token in key.upper() for token in ("AI", "KEY", "FRONTEND", "RAILWAY", "PORT"))
-    )
-    return {
-        "version": "env-debug-v2",
-        "has_raw_ai_api_key": bool(raw_ai_api_key),
-        "raw_ai_api_key_len": len(raw_ai_api_key),
-        "raw_ai_api_key_fp": _fingerprint(raw_ai_api_key.strip().strip("'\"")),
-        "configured_ai_api_key_len": len(AI_API_KEY),
-        "configured_ai_api_key_fp": _fingerprint(AI_API_KEY),
-        "configured_is_default": AI_API_KEY == "dev-secret-key-change-in-production",
-        "frontend_url": _frontend_url,
-        "allowed_origins": _allowed_origins,
-        "relevant_env_keys": relevant_env_keys,
-    }
 
 
 @app.post("/init-session", response_model=InitSessionResponse)
@@ -310,6 +254,8 @@ async def web_chat(body: WebChatRequest, _: str = Depends(verify_api_key)):
 
     result = await run_in_threadpool(
         generate_customer_turn_web,
+        llm_provider=body.llm_provider,
+        llm_model=body.llm_model,
         customer_persona=body.customer_persona,
         scenario_title=body.scenario_title,
         scenario_description=body.scenario_description,
@@ -359,6 +305,8 @@ def web_evaluate(body: WebEvaluateRequest, _: str = Depends(verify_api_key)):
     messages = [{"role": m.role, "content": m.content} for m in body.messages]
 
     result = generate_evaluation_web(
+        llm_provider=body.llm_provider,
+        llm_model=body.llm_model,
         messages=messages,
         scenario_title=body.scenario_title,
         scenario_description=body.scenario_description,
@@ -379,7 +327,11 @@ def web_generate_scenario(body: WebGenerateScenarioRequest, _: str = Depends(ver
     """Auto-generate scenario from document contents."""
     from llm.llm_client import generate_scenario_from_doc
 
-    result = generate_scenario_from_doc(document_contents=body.document_contents)
+    result = generate_scenario_from_doc(
+        document_contents=body.document_contents,
+        llm_provider=body.llm_provider,
+        llm_model=body.llm_model,
+    )
 
     return WebGenerateScenarioResponse(
         title=result["title"],
@@ -394,6 +346,8 @@ async def call_room_websocket(
     session_id: str,
     persona: str = "A potential buyer",
     company_context: str | None = None,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
 ):
     """Real-time Call Room Endpoint via OpenRouter + FPT TTS."""
     await websocket.accept()
@@ -440,6 +394,8 @@ async def call_room_websocket(
                 from tools.tts_client import wait_for_fpt_audio
                 
                 stream = generate_customer_turn_voice_stream(
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
                     customer_persona=persona,
                     scenario_title="Sales Call",
                     scenario_description="",
@@ -538,3 +494,26 @@ async def call_room_websocket(
         print(f"WebSocket error: {e}")
 
 
+# ================================================================
+# Direct Voice WebSocket — for web voice gateway relay
+# Internal endpoint: only accepts connections from web voice gateway
+# ================================================================
+
+@app.websocket("/ws/direct-call/{session_id}")
+async def direct_call_websocket(
+    websocket: WebSocket,
+    session_id: str,
+    token: str | None = None,
+):
+    """Internal direct voice WebSocket for web gateway relay.
+
+    Mobile clients connect to the web voice gateway, not here.
+    Web gateway verifies session ownership + quota, then forwards
+    binary audio here over this internal connection.
+
+    Query params:
+        token: internal API key (AI_API_KEY) for gateway authentication
+    """
+    from api.voice_ws import handle_direct_voice_websocket
+
+    await handle_direct_voice_websocket(websocket, session_id, token)
