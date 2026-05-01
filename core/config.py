@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load repo .env for local development only. Railway variables take precedence.
-_root = Path(__file__).resolve().parent.parent
+# Load root .env for local development only. Runtime env vars take precedence.
+_root = Path(__file__).resolve().parent.parent.parent
 load_dotenv(_root / ".env", override=False)
 
 

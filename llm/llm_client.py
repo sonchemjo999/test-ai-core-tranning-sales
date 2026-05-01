@@ -165,43 +165,14 @@ def _chat_json(
             messages=messages,
         )
     except Exception as exc:
-        is_auth_error = any(
-            marker in str(exc) or marker in type(exc).__name__
-            for marker in ["401", "403", "AuthenticationError", "PermissionDenied"]
-        )
-        # Retry without response_format if JSON mode is unsupported.
+        # Some OpenAI-compatible gateways/models do not support JSON mode.
+        # Retry once without response_format before surfacing a provider error.
         if "response_format" in str(exc) or "json_object" in str(exc):
             completion = client.chat.completions.create(
                 model=model_name,
                 temperature=temperature,
                 messages=messages,
             )
-        # Auth errors — try other available providers in priority order.
-        elif is_auth_error:
-            tried = {provider}
-            priority = ["gpt", "gemini", "grok", "groq", "openrouter"]
-            for next_provider in priority:
-                if next_provider in tried:
-                    continue
-                api_key, _, next_model, _ = _provider_config(next_provider)
-                if api_key:
-                    try:
-                        next_client = _selected_client(next_provider)
-                        completion = next_client.chat.completions.create(
-                            model=model_name,
-                            temperature=temperature,
-                            response_format={"type": "json_object"},
-                            messages=messages,
-                        )
-                        print(f"[llm] fallback: {provider} → {next_provider} for model={model_name}")
-                        break
-                    except Exception:
-                        tried.add(next_provider)
-                        continue
-            else:
-                raise RuntimeError(
-                    f"LLM provider error ({provider}, model={model_name}, base_url={base_url}): {exc}"
-                ) from exc
         else:
             print(
                 "[llm] chat completion failed",
@@ -686,44 +657,18 @@ async def generate_customer_turn_voice_stream(
         default_model=VOICE_LLM_MODEL,
         default_provider=VOICE_LLM_PROVIDER,
     )
-
-    # Try selected provider, fallback on auth errors.
-    priority = ["gpt", "gemini", "grok", "groq", "openrouter"]
-    tried: set[str] = set()
-    current_provider = provider
-    while True:
-        client = _selected_async_client(current_provider)
-        try:
-            response_stream = await client.chat.completions.create(
-                model=model_name,
-                temperature=0.6,
-                max_tokens=80,  # Prevent long rambling
-                stream=True,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_payload},
-                ],
-            )
-            break
-        except Exception as exc:
-            is_auth = any(
-                m in str(exc) or m in type(exc).__name__
-                for m in ["401", "403", "AuthenticationError", "PermissionDenied"]
-            )
-            if not is_auth:
-                raise
-            tried.add(current_provider)
-            next_provider = next((p for p in priority if p not in tried), None)
-            if next_provider:
-                api_key, _, next_model, _ = _provider_config(next_provider)
-                if api_key:
-                    print(f"[llm] voice fallback: {current_provider} → {next_provider}")
-                    model_name = next_model
-                    current_provider = next_provider
-                    continue
-            raise RuntimeError(
-                f"All LLM providers failed (auth error). Tried: {tried}"
-            ) from exc
+    client = _selected_async_client(provider)
+    
+    response_stream = await client.chat.completions.create(
+        model=model_name,
+        temperature=0.6,
+        max_tokens=80, # Prevent long rambling
+        stream=True,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_payload},
+        ],
+    )
 
     buffer = ""
     sentence_end_chars = {'.', '!', '?', '\n'}
