@@ -686,18 +686,44 @@ async def generate_customer_turn_voice_stream(
         default_model=VOICE_LLM_MODEL,
         default_provider=VOICE_LLM_PROVIDER,
     )
-    client = _selected_async_client(provider)
-    
-    response_stream = await client.chat.completions.create(
-        model=model_name,
-        temperature=0.6,
-        max_tokens=80, # Prevent long rambling
-        stream=True,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_payload},
-        ],
-    )
+
+    # Try selected provider, fallback on auth errors.
+    priority = ["gpt", "gemini", "grok", "groq", "openrouter"]
+    tried: set[str] = set()
+    current_provider = provider
+    while True:
+        client = _selected_async_client(current_provider)
+        try:
+            response_stream = await client.chat.completions.create(
+                model=model_name,
+                temperature=0.6,
+                max_tokens=80,  # Prevent long rambling
+                stream=True,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_payload},
+                ],
+            )
+            break
+        except Exception as exc:
+            is_auth = any(
+                m in str(exc) or m in type(exc).__name__
+                for m in ["401", "403", "AuthenticationError", "PermissionDenied"]
+            )
+            if not is_auth:
+                raise
+            tried.add(current_provider)
+            next_provider = next((p for p in priority if p not in tried), None)
+            if next_provider:
+                api_key, _, next_model, _ = _provider_config(next_provider)
+                if api_key:
+                    print(f"[llm] voice fallback: {current_provider} → {next_provider}")
+                    model_name = next_model
+                    current_provider = next_provider
+                    continue
+            raise RuntimeError(
+                f"All LLM providers failed (auth error). Tried: {tried}"
+            ) from exc
 
     buffer = ""
     sentence_end_chars = {'.', '!', '?', '\n'}
