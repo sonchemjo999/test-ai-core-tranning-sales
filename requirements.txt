@@ -1,0 +1,21 @@
+# Core
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.0
+python-dotenv>=1.0.0
+
+# LLM clients
+openai>=1.35.0
+anthropic>=0.25.0
+
+# LangGraph
+langgraph>=0.2.0
+
+# TTS
+httpx>=0.27.0
+aiofiles>=23.2.1
+
+# Utilities
+python-multipart>=0.0.9
+sse-starlette>=2.0.0
+websockets>=12.0
