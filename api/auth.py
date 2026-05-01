@@ -19,6 +19,7 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 def verify_api_key(api_key: str | None = Security(_api_key_header)) -> str:
     """Verify X-API-Key header matches the configured secret."""
-    if not api_key or api_key != AI_API_KEY:
+    normalized_api_key = api_key.strip() if api_key else ""
+    if not normalized_api_key or normalized_api_key != AI_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
-    return api_key
+    return normalized_api_key
