@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 # Load root .env
 _root = Path(__file__).resolve().parent.parent.parent  # core-ai/core/config.py → core-ai → A20-App-154/
-load_dotenv(_root / ".env", override=True)
+load_dotenv(_root / ".env", override=False)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
