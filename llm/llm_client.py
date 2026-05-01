@@ -151,18 +151,56 @@ def _chat_json(
         default_provider=LLM_PROVIDER,
     )
     client = _selected_client(provider)
+    _api_key, base_url, _provider_model, _headers = _provider_config(provider)
 
-    completion = client.chat.completions.create(
-        model=model_name,
-        temperature=temperature,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    )
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    try:
+        completion = client.chat.completions.create(
+            model=model_name,
+            temperature=temperature,
+            response_format={"type": "json_object"},
+            messages=messages,
+        )
+    except Exception as exc:
+        # Some OpenAI-compatible gateways/models do not support JSON mode.
+        # Retry once without response_format before surfacing a provider error.
+        if "response_format" in str(exc) or "json_object" in str(exc):
+            completion = client.chat.completions.create(
+                model=model_name,
+                temperature=temperature,
+                messages=messages,
+            )
+        else:
+            print(
+                "[llm] chat completion failed",
+                {
+                    "provider": provider,
+                    "model": model_name,
+                    "base_url": base_url,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:1000],
+                },
+            )
+            raise RuntimeError(
+                f"LLM provider error ({provider}, model={model_name}, base_url={base_url}): {exc}"
+            ) from exc
     raw = completion.choices[0].message.content or "{}"
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(
+            "[llm] invalid json response",
+            {
+                "provider": provider,
+                "model": model_name,
+                "base_url": base_url,
+                "raw": raw[:1000],
+            },
+        )
+        raise RuntimeError(f"LLM returned invalid JSON ({provider}, model={model_name}).") from exc
 
 
 def generate_customer_turn(state: SalesSessionState) -> dict[str, Any]:
