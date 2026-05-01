@@ -4,6 +4,7 @@ Sale Train Agent — FastAPI wrapper around the LangGraph sales simulator (MVP).
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import uuid
@@ -38,6 +39,7 @@ from core.schemas import (
 )
 from core.state import SalesSessionState, initial_sales_state
 from api.auth import verify_api_key
+from core.config import AI_API_KEY
 
 app = FastAPI(
     title="Sale Train Agent API",
@@ -94,6 +96,25 @@ def root() -> dict[str, str]:
         "status": "ok",
         "service": "Sale Train Agent API",
         "health": "/health",
+    }
+
+
+def _fingerprint(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:10] if value else "empty"
+
+
+@app.get("/debug/env")
+def debug_env() -> dict[str, object]:
+    raw_ai_api_key = os.getenv("AI_API_KEY", "")
+    return {
+        "has_raw_ai_api_key": bool(raw_ai_api_key),
+        "raw_ai_api_key_len": len(raw_ai_api_key),
+        "raw_ai_api_key_fp": _fingerprint(raw_ai_api_key.strip().strip("'\"")),
+        "configured_ai_api_key_len": len(AI_API_KEY),
+        "configured_ai_api_key_fp": _fingerprint(AI_API_KEY),
+        "configured_is_default": AI_API_KEY == "dev-secret-key-change-in-production",
+        "frontend_url": os.getenv("FRONTEND_URL", ""),
+        "allowed_origins": _allowed_origins,
     }
 
 
