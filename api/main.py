@@ -444,6 +444,7 @@ async def call_room_websocket(
     company_context: str | None = None,
     cheat_sheet: str | None = None,
     token: str | None = None,
+    gender: str = "male",
 ):
     """Real-time Call Room Endpoint via OpenRouter + FPT TTS.
 
@@ -539,16 +540,20 @@ async def call_room_websocket(
                 
                 async def generate_tts_task(sentence_text: str, tts_start_ms: float):
                     if ELEVENLABS_API_KEY:
-                        b64_url = await generate_tts_elevenlabs_base64(sentence_text)
-                        return b64_url, tts_start_ms
+                        # Determine Voice ID based on gender
+                        # Placeholder for female voice (Bella), male voice uses default ELEVENLABS_VOICE_ID
+                        # User requested to use male voice for now. Replace None with female voice ID later.
+                        vid = None # "EXAVITQu4vr4xnSDxMaL" if gender == "female" else None
+                        b64_url, audio_fmt = await generate_tts_elevenlabs_base64(sentence_text, voice_id=vid)
+                        return b64_url, tts_start_ms, audio_fmt
                     elif TTS_API_KEY:
                         from tools.tts_client import generate_tts_fpt, wait_for_fpt_audio
                         audio_url = await generate_tts_fpt(sentence_text)
                         if audio_url:
                             is_ready = await wait_for_fpt_audio(audio_url)
                             if is_ready:
-                                return audio_url, tts_start_ms
-                    return None, tts_start_ms
+                                return audio_url, tts_start_ms, "mp3"
+                    return None, tts_start_ms, "mp3"
 
                 tts_queue = asyncio.Queue()
 
@@ -557,13 +562,14 @@ async def call_room_websocket(
                         task = await tts_queue.get()
                         if task is None:
                             break
-                        audio_url, tts_start_ms = await task
+                        audio_url, tts_start_ms, audio_fmt = await task
                         if audio_url:
                             total_tts_ms = int((time.perf_counter() - tts_start_ms) * 1000)
-                            print(f"[voice-latency] TTS Ready | Total: {total_tts_ms}ms")
+                            print(f"[voice-latency] TTS Ready | Total: {total_tts_ms}ms | format: {audio_fmt}")
                             await ws.send_json({
                                 "type": "audio_url",
                                 "url": audio_url,
+                                "format": audio_fmt,
                                 "metrics": metrics,
                             })
                         tts_queue.task_done()
