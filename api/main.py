@@ -532,6 +532,8 @@ async def call_room_websocket(
                 )
                 print(f"[LATENCY][TIP-003] turn={_turn_counter} | stream_create: {(time.perf_counter() - stream_create_start)*1000:.0f}ms")
 
+                import asyncio
+
                 # Check Cartesia availability once per turn
                 from core.config import CARTESIA_API_KEY as _ckey, CARTESIA_FEMALE_VOICE_ID, CARTESIA_MALE_VOICE_ID
                 _use_cartesia = bool(_ckey)
