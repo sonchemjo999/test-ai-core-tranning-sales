@@ -37,7 +37,7 @@ def _load_aiortc() -> dict[str, Any]:
         import av
     except Exception as exc:  # pragma: no cover - depends on optional package
         raise RuntimeError(
-            "aiortc is not available. Install aiortc>=1.9.0 and aiortc-contrib-media>=1.9.0"
+            "aiortc is not available. Install aiortc>=1.9.0"
         ) from exc
 
     return {

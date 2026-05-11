@@ -378,14 +378,15 @@ def web_generate_scenario(body: WebGenerateScenarioRequest, _: str = Depends(ver
 @app.post("/api/v1/training/sessions/{session_id}/avatar-token")
 def create_avatar_token(
     session_id: str,
-    body: dict = Body(default_factory=dict),
+    body: dict | None = Body(default=None),
     _: str = Depends(verify_api_key),
 ) -> dict[str, str | int]:
     """Issue a WebRTC avatar signaling token for phone clients."""
     from api.ws_auth import issue_ws_token, TTL
 
-    gender = str(body.get("gender") or "male")
-    user_id = str(body.get("user_id") or "phone")
+    payload = body or {}
+    gender = str(payload.get("gender") or "male")
+    user_id = str(payload.get("user_id") or "phone")
     token, exp = issue_ws_token(session_id=session_id, user_id=user_id, ttl_seconds=TTL)
     ws_base = (
         os.environ.get("CORE_AI_PUBLIC_WS_URL")
