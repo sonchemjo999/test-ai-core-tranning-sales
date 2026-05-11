@@ -38,6 +38,30 @@ DEFAULT_FEMALE_FACE_ID = "cace3ef7-a4c4-425d-a8cf-a5358eb0c427"
 _MALE_FACE_ID = SIMLI_MALE_FACE_ID or DEFAULT_MALE_FACE_ID
 _FEMALE_FACE_ID = SIMLI_FEMALE_FACE_ID or DEFAULT_FEMALE_FACE_ID
 
+# Simli client class references — loaded lazily to avoid import errors when package not installed
+_simli_client_cls: type | None = None
+_simli_config_cls: type | None = None
+
+def _load_simli_sdk() -> bool:
+    """Try to import simli-ai SDK. Returns True if available, False otherwise."""
+    global _simli_client_cls, _simli_config_cls
+    if _simli_client_cls is not None:
+        return True
+    try:
+        from simli import SimliClient, SimliConfig
+        _simli_client_cls = SimliClient
+        _simli_config_cls = SimliConfig
+        return True
+    except ImportError:
+        logger.warning(
+            "[SimliAvatar] simli-ai package not installed — avatar streaming disabled. "
+            "Run: pip install simli-ai"
+        )
+        return False
+    except Exception as e:
+        logger.error(f"[SimliAvatar] Error loading simli-ai: {e}")
+        return False
+
 
 @dataclass
 class SimliSession:
@@ -83,8 +107,6 @@ class SimliAvatarManager:
         self._sessions_lock = asyncio.Lock()
 
         self._simli_available = False
-        self._simli_client_cls: Any = None
-        self._simli_config_cls: Any = None
 
         self._check_simli_available()
 
@@ -98,20 +120,9 @@ class SimliAvatarManager:
             logger.warning("[SimliAvatar] SIMLI_API_KEY not set — avatar streaming disabled")
             return
 
-        try:
-            from simli import SimliClient, SimliConfig
-
-            self._simli_client_cls = SimliClient
-            self._simli_config_cls = SimliConfig
+        if _load_simli_sdk():
             self._simli_available = True
             logger.info("[SimliAvatar] simli-ai package loaded successfully")
-        except ImportError:
-            logger.warning(
-                "[SimliAvatar] simli-ai not installed — avatar streaming disabled. "
-                "Run: pip install simli-ai"
-            )
-        except Exception as e:
-            logger.error(f"[SimliAvatar] Error loading simli-ai: {e}")
 
     @property
     def is_available(self) -> bool:
@@ -184,12 +195,15 @@ class SimliAvatarManager:
 
     async def _connect_to_simli(self, session: SimliSession) -> None:
         """Establish WebRTC connection to Simli."""
-        if not self._simli_available or not self._simli_client_cls:
-            raise RuntimeError("Simli client not initialized")
+        if not self._simli_available:
+            raise RuntimeError("Simli client not available")
+
+        if not _load_simli_sdk():
+            raise RuntimeError("simli-ai package not installed")
 
         try:
-            config = self._simli_config_cls(faceId=session.face_id)
-            client = self._simli_client_cls(api_key=SIMLI_API_KEY, config=config)
+            config = _simli_config_cls(faceId=session.face_id)
+            client = _simli_client_cls(api_key=SIMLI_API_KEY, config=config)
 
             if hasattr(client, "set_video_frame_callback"):
                 if session.video_frame_callback:

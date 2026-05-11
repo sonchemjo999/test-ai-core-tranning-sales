@@ -468,72 +468,132 @@ async def avatar_websocket(
 
     valid, reason = verify_ws_token(token, session_id)
     if not valid:
+        # Log auth failures for debugging
+        print(f"[avatar-ws] Auth failed for session={session_id}: {reason}")
         await websocket.close(code=1008, reason=f"Auth failed: {reason}")
         return
 
     await websocket.accept()
     manager = get_simli_manager()
 
-    if not manager.is_available:
-        try:
-            await websocket.send_json({
-                "type": "avatar_error",
-                "message": "Avatar service is not available on this server. "
-                           "Set SIMLI_API_KEY and SIMLI_ENABLED=true in core-ai/.env",
-            })
-        except Exception:
-            pass
-        await websocket.close(code=1011, reason="Avatar service unavailable")
-        return
+    # Static avatar image for fallback (DiceBear generated avatar)
+    static_avatar_url = (
+        "https://api.dicebear.com/7.x/avataaars/png"
+        f"?seed=simli-{gender}&backgroundColor=c0aede&clothingColor=1d3557"
+    )
+    _cached_static_avatar: bytes | None = None
 
-    # Forward frames directly to the phone WebSocket
-    async def frame_forwarder(frame_bytes: bytes) -> None:
+    async def _fetch_static_avatar() -> bytes | None:
+        """Download and cache the static avatar image."""
+        nonlocal _cached_static_avatar
+        if _cached_static_avatar is not None:
+            return _cached_static_avatar
         try:
-            # Send as binary JPEG frame
-            await websocket.send_bytes(frame_bytes)
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(static_avatar_url)
+                if resp.status_code == 200:
+                    _cached_static_avatar = resp.content
+                    return _cached_static_avatar
         except Exception as e:
-            print(f"[avatar-ws] Failed to send frame to phone: {e}")
+            print(f"[avatar-ws] Failed to fetch static avatar: {e}")
+        return None
 
-    # Start Simli avatar session with frame callback
-    try:
-        session = await manager.start_session(
-            session_id=session_id,
-            gender=gender,
-            video_frame_callback=frame_forwarder,
-            error_callback=None,
-        )
-    except Exception as e:
+    async def _send_static_frame() -> None:
+        """Send the static avatar as a JPEG frame."""
+        try:
+            data = await _fetch_static_avatar()
+            if data:
+                await websocket.send_bytes(data)
+                debug_log_count = 0  # Throttle debug log
+                debug_log_count += 1
+                if debug_log_count <= 3:
+                    print(f"[avatar-ws] Sent static avatar frame ({len(data)} bytes)")
+        except Exception as e:
+            print(f"[avatar-ws] Failed to send static frame: {e}")
+
+    _simli_session = None
+    _simli_available = manager.is_available
+
+    if not _simli_available:
+        # Simli unavailable — still accept connection but signal error
+        print(f"[avatar-ws] Simli unavailable for session={session_id} — using static avatar fallback")
         try:
             await websocket.send_json({
                 "type": "avatar_error",
-                "message": f"Failed to start avatar session: {e}",
+                "message": "Avatar service unavailable. Showing static avatar.",
+                "avatar_url": static_avatar_url,
             })
         except Exception:
             pass
-        await websocket.close(code=1011, reason=f"Avatar session error: {e}")
-        return
+        # Continue with static avatar loop instead of closing
+    else:
+        # Forward frames directly to the phone WebSocket
+        async def frame_forwarder(frame_bytes: bytes) -> None:
+            try:
+                await websocket.send_bytes(frame_bytes)
+            except Exception as e:
+                print(f"[avatar-ws] Failed to send frame to phone: {e}")
+
+        # Start Simli avatar session with frame callback
+        try:
+            _simli_session = await manager.start_session(
+                session_id=session_id,
+                gender=gender,
+                video_frame_callback=frame_forwarder,
+                error_callback=None,
+            )
+        except Exception as e:
+            print(f"[avatar-ws] Failed to start Simli session: {e}")
+            try:
+                await websocket.send_json({
+                    "type": "avatar_error",
+                    "message": f"Avatar session failed: {e}",
+                    "avatar_url": static_avatar_url,
+                })
+            except Exception:
+                pass
+            _simli_available = False
+
+    # Send initial avatar ready / static frame
+    try:
+        if _simli_available and _simli_session:
+            await websocket.send_json({
+                "type": "avatar_ready",
+                "avatar_url": static_avatar_url,
+                "gender": gender,
+            })
+        # For static fallback, send the first frame immediately
+        await _send_static_frame()
+    except Exception as e:
+        print(f"[avatar-ws] Failed to send initial avatar: {e}")
+
+    # Track last static frame send time
+    import time as _time
+    _last_static_frame_at = 0.0
+    _FRAME_INTERVAL = 5.0  # Send static frame every 5 seconds to keep connection alive
 
     try:
-        # Send avatar ready signal with static image URL
-        avatar_url = (
-            "https://api.dicebear.com/7.x/avataaars/png"
-            f"?seed=simli-{gender}&backgroundColor=c0aede&clothingColor=1d3557"
-        )
-        await websocket.send_json({
-            "type": "avatar_ready",
-            "avatar_url": avatar_url,
-            "gender": gender,
-        })
-
-        # Main message loop — phone sends audio, we forward to Simli
+        # Main message loop
         while True:
-            raw = await websocket.receive()
+            try:
+                # Use wait_for with timeout to periodically send static frames
+                raw = await websocket.receive()
+            except Exception as e:
+                # Handle timeout or receive error
+                now = _time.time()
+                if now - _last_static_frame_at > _FRAME_INTERVAL:
+                    if not _simli_available:
+                        await _send_static_frame()
+                    _last_static_frame_at = now
+                continue
+
             msg_type = raw.get("type", "")
 
             # Binary: raw PCM16 audio bytes from phone mic
             if msg_type == "binary":
                 audio_bytes = raw.get("bytes")
-                if audio_bytes:
+                if audio_bytes and _simli_available:
                     await manager.send_audio(session_id, audio_bytes)
                 continue
 
@@ -544,7 +604,7 @@ async def avatar_websocket(
                     msg = json.loads(text)
                     if msg.get("type") == "audio":
                         data = msg.get("data")
-                        if data:
+                        if data and _simli_available:
                             audio_bytes = base64.b64decode(data)
                             await manager.send_audio(session_id, audio_bytes)
                 except Exception as e:
@@ -556,7 +616,8 @@ async def avatar_websocket(
     except Exception as e:
         print(f"[avatar-ws] WebSocket error for {session_id}: {e}")
     finally:
-        await manager.stop_session(session_id)
+        if _simli_session:
+            await manager.stop_session(session_id)
         print(f"[avatar-ws] Avatar session cleaned up: {session_id}")
 
 
