@@ -1,30 +1,35 @@
-# Core
-fastapi>=0.110.0
-uvicorn[standard]>=0.29.0
-pydantic>=2.7.0
-python-dotenv>=1.0.0
+# FastAPI + WebSocket
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+websockets>=12.0
+python-multipart>=0.0.9
 
-# LLM clients
-openai>=1.35.0
-anthropic>=0.25.0
-
-# LangGraph
-langgraph>=0.2.0
-
-# TTS
+# HTTP client
 httpx>=0.27.0
 
-# Document Ingestion — Phase 1 (PDF, DOCX, XLSX)
-openpyxl>=3.1.2
+# Environment variables
+python-dotenv>=1.0.0
+
+# LangGraph + LangChain
+langgraph>=0.2.0
+langchain-core>=0.3.0
+langchain-anthropic>=0.2.0
+langchain-openai>=0.2.0
+langchain-google-genai>=0.1.0
+
+# AI Providers
+anthropic>=0.27.0
+openai>=1.0.0
+google-genai>=0.8.0
+groq>=0.5.0
+openrouter>=0.3.0
+
+# PDF / Document processing
+pymupdf>=1.24.0
 python-docx>=1.1.0
-pdfminer.six>=20231228
+openpyxl>=3.1.0
+pandas>=2.2.0
+tabulate>=0.9.0
 
-# Testing
-pytest>=8.2.0
-
-# Utilities
-python-multipart>=0.0.9
-websockets>=12.0
-
-# Simli Avatar Streaming
+# Simli Avatar (AI-powered video avatar)
 simli-ai>=0.1.0
