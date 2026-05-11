@@ -289,7 +289,15 @@ async def web_chat(body: WebChatRequest, _: str = Depends(verify_api_key)):
     from llm.llm_client import generate_customer_turn_web
     from fastapi.concurrency import run_in_threadpool
     from tools.tts_client import generate_tts_fpt
-    from core.config import TTS_API_KEY
+    from tools.tts_cartesia import generate_tts_cartesia_base64
+    from core.config import (
+        CARTESIA_API_KEY,
+        CARTESIA_FEMALE_VOICE_ID,
+        CARTESIA_MALE_VOICE_ID,
+        TTS_API_KEY,
+        TTS_FEMALE_VOICE,
+        TTS_MALE_VOICE,
+    )
 
     # Build conversation history as list of dicts
     history = [{"role": m.role, "content": m.content} for m in body.conversation_history]
@@ -319,9 +327,19 @@ async def web_chat(body: WebChatRequest, _: str = Depends(verify_api_key)):
 
     customer_reply_text = result.get("customer_message", "")
     audio_url = None
-    if TTS_API_KEY and customer_reply_text:
+    audio_format = None
+    gender = (body.gender or "male").lower()
+    if CARTESIA_API_KEY and customer_reply_text:
         try:
-            audio_url = await generate_tts_fpt(customer_reply_text)
+            voice_id = CARTESIA_FEMALE_VOICE_ID if gender == "female" else CARTESIA_MALE_VOICE_ID
+            audio_url, audio_format = await generate_tts_cartesia_base64(customer_reply_text, voice_id)
+        except Exception as e:
+            print(f"Cartesia TTS Error: {str(e)}")
+    if not audio_url and TTS_API_KEY and customer_reply_text:
+        try:
+            fpt_voice = TTS_FEMALE_VOICE if gender == "female" else TTS_MALE_VOICE
+            audio_url = await generate_tts_fpt(customer_reply_text, voice=fpt_voice)
+            audio_format = "mp3" if audio_url else None
         except Exception as e:
             print(f"TTS Error: {str(e)}")
 
@@ -331,6 +349,7 @@ async def web_chat(body: WebChatRequest, _: str = Depends(verify_api_key)):
         end_reason=end_reason,
         turn_count=body.current_turn,
         audio_url=audio_url,
+        audio_format=audio_format,
     )
 
 
@@ -602,7 +621,13 @@ async def call_room_websocket(
                 from tools.tts_cartesia import generate_tts_cartesia_base64, generate_tts_cartesia_stream
 
                 # Check Cartesia availability once per turn
-                from core.config import CARTESIA_API_KEY as _ckey, CARTESIA_FEMALE_VOICE_ID, CARTESIA_MALE_VOICE_ID
+                from core.config import (
+                    CARTESIA_API_KEY as _ckey,
+                    CARTESIA_FEMALE_VOICE_ID,
+                    CARTESIA_MALE_VOICE_ID,
+                    TTS_FEMALE_VOICE,
+                    TTS_MALE_VOICE,
+                )
                 _use_cartesia = bool(_ckey)
 
                 full_bot_text = ""
@@ -615,7 +640,8 @@ async def call_room_websocket(
                         return b64_url, tts_start_ms, audio_fmt
                     elif TTS_API_KEY:
                         from tools.tts_client import generate_tts_fpt, wait_for_fpt_audio
-                        audio_url = await generate_tts_fpt(sentence_text)
+                        fpt_voice = TTS_FEMALE_VOICE if gender == "female" else TTS_MALE_VOICE
+                        audio_url = await generate_tts_fpt(sentence_text, voice=fpt_voice)
                         if audio_url:
                             is_ready = await wait_for_fpt_audio(audio_url)
                             if is_ready:

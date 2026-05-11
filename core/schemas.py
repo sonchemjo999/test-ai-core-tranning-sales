@@ -174,6 +174,7 @@ class WebChatRequest(BaseModel):
     ai_tone: str = Field(default="neutral", description="Thái độ của AI: friendly, neutral, harsh")
     follow_up_depth: str = Field(default="moderate", description="Mức độ truy vấn: light, moderate, deep")
     time_remaining_seconds: int | None = None
+    gender: str = Field(default="male", description="Voice/avatar gender: male or female")
 
 
 class WebChatResponse(BaseModel):
@@ -186,6 +187,7 @@ class WebChatResponse(BaseModel):
         default=None, 
         description="Đường dẫn đến file âm thanh phản hồi từ FPT.AI TTS."
     )
+    audio_format: str | None = Field(default=None, description="Audio format tag, e.g. mp3 or pcm16")
 
 
 class RubricScoreSchema(BaseModel):

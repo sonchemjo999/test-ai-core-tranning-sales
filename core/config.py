@@ -21,9 +21,22 @@ AI_API_KEY = os.getenv("AI_API_KEY", "dev-secret-key-change-in-production")
 # FPT.AI Text-to-Speech
 TTS_API_KEY = os.getenv("TTS_API_KEY", "").strip()
 TTS_VOICE = os.getenv("TTS_VOICE", "minhquang")
+TTS_MALE_VOICE = os.getenv("TTS_MALE_VOICE", TTS_VOICE).strip()
+TTS_FEMALE_VOICE = os.getenv("TTS_FEMALE_VOICE", "banmai").strip()
 TTS_SPEED = os.getenv("TTS_SPEED", "1")
 
 # Cartesia Text-to-Speech (male / female voice — sonic-3.5, Vietnamese)
 CARTESIA_API_KEY         = os.getenv("CARTESIA_API_KEY", "").strip()
 CARTESIA_MALE_VOICE_ID   = os.getenv("CARTESIA_MALE_VOICE_ID", "CAAD5E2A-0BB2-4CB6-89C0-5D09C7B3D94B")
 CARTESIA_FEMALE_VOICE_ID = os.getenv("CARTESIA_FEMALE_VOICE_ID", "935a9060-373c-49e4-b078-f4ea6326987a")
+
+# Simli Avatar
+SIMLI_API_KEY = os.getenv("SIMLI_API_KEY", "").strip()
+SIMLI_ENABLED = os.getenv("SIMLI_ENABLED", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+SIMLI_MALE_FACE_ID = os.getenv("SIMLI_MALE_FACE_ID", "").strip()
+SIMLI_FEMALE_FACE_ID = os.getenv("SIMLI_FEMALE_FACE_ID", "").strip()

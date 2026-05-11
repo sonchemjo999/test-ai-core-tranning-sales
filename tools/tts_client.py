@@ -10,7 +10,7 @@ from core.config import TTS_API_KEY, TTS_VOICE, TTS_SPEED
 
 logger = logging.getLogger(__name__)
 
-async def generate_tts_fpt(text: str) -> str | None:
+async def generate_tts_fpt(text: str, voice: str | None = None) -> str | None:
     """
     Sends text to FPT.AI TTS v5 API and returns the audio URL.
     """
@@ -22,7 +22,7 @@ async def generate_tts_fpt(text: str) -> str | None:
     headers = {
         'api-key': TTS_API_KEY,
         'speed': str(TTS_SPEED),
-        'voice': TTS_VOICE
+        'voice': voice or TTS_VOICE
     }
     
     try:
