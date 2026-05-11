@@ -39,15 +39,12 @@ app = FastAPI(
     version="0.2.0",
 )
 
-# CORS — allow Next.js dev server + Android emulator (10.0.2.2 = host localhost)
+# CORS — allow Next.js dev server
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "http://10.0.2.2:3000",
-        "http://10.0.2.2:8001",
-        "http://localhost:8001",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -439,128 +436,6 @@ def web_deep_read(body: DeepReadRequest, _: str = Depends(verify_api_key)):
     return DeepReadResponse(**result)
 
 
-@app.websocket("/ws/avatar/{session_id}")
-async def avatar_websocket(
-    websocket: WebSocket,
-    session_id: str,
-    token: str | None = None,
-    gender: str = "male",
-):
-    """
-    Avatar Video WebSocket — bridges Simli AI avatar with the phone app.
-
-    Protocol:
-      1. Client connects with HMAC ticket in query param `token`
-      2. Server authenticates, starts a Simli avatar session
-      3. Server sends {type:"avatar_ready"} with avatar metadata
-      4. Server sends binary JPEG video frames (from Simli SDK)
-      5. Phone → Server: audio bytes (PCM16 binary) for lip-sync
-    """
-    import asyncio
-    import base64
-    import json
-
-    # ── Auth ───────────────────────────────────────────────────────────
-    if not token:
-        await websocket.close(code=1008, reason="Missing auth token")
-        return
-
-    from api.ws_auth import verify_ws_token
-
-    valid, reason = verify_ws_token(token, session_id)
-    if not valid:
-        print(f"[avatar-ws] Auth failed for session={session_id}: {reason}")
-        await websocket.close(code=1008, reason=f"Auth failed: {reason}")
-        return
-
-    await websocket.accept()
-    print(f"[avatar-ws] Connected: session={session_id}, gender={gender}")
-
-    # ── Simli setup ───────────────────────────────────────────────────
-    from api.simli_avatar import get_simli_manager
-
-    manager = get_simli_manager()
-    _simli_available = manager.is_available
-    _simli_session = None
-
-    if _simli_available:
-
-        def _make_frame_forwarder(ws: WebSocket) -> callable:
-            async def forwarder(frame_bytes: bytes) -> None:
-                try:
-                    await ws.send_bytes(frame_bytes)
-                except Exception as e:
-                    print(f"[avatar-ws] Frame send error: {e}")
-
-            return forwarder
-
-        try:
-            _simli_session = await manager.start_session(
-                session_id=session_id,
-                gender=gender,
-                video_frame_callback=_make_frame_forwarder(websocket),
-                error_callback=None,
-            )
-        except Exception as e:
-            print(f"[avatar-ws] Simli session start failed: {e}")
-            _simli_available = False
-
-    # ── Send initial signal ────────────────────────────────────────────
-    if _simli_available:
-        await websocket.send_json({
-            "type": "avatar_ready",
-            "gender": gender,
-        })
-        print(f"[avatar-ws] Avatar ready for session={session_id}")
-    else:
-        await websocket.send_json({
-            "type": "avatar_error",
-            "message": "Avatar service unavailable on this server. "
-                       "Set SIMLI_API_KEY and SIMLI_ENABLED=true, then install simli-ai.",
-        })
-        print(f"[avatar-ws] Avatar unavailable for session={session_id}")
-
-    # ── Main loop ─────────────────────────────────────────────────────
-    try:
-        while True:
-            try:
-                raw = await websocket.receive()
-            except Exception:
-                # Client disconnected — exit gracefully
-                break
-
-            msg_type = raw.get("type", "")
-
-            # Binary: raw PCM16 audio bytes from phone mic
-            if msg_type == "binary":
-                audio_bytes = raw.get("bytes")
-                if audio_bytes and _simli_available:
-                    await manager.send_audio(session_id, audio_bytes)
-                continue
-
-            # Text: JSON (audio in base64)
-            if msg_type == "text":
-                text = raw.get("text", "{}")
-                try:
-                    msg = json.loads(text)
-                    if msg.get("type") == "audio" and _simli_available:
-                        data = msg.get("data")
-                        if data:
-                            audio_bytes = base64.b64decode(data)
-                            await manager.send_audio(session_id, audio_bytes)
-                except Exception as e:
-                    print(f"[avatar-ws] Error processing message: {e}")
-                continue
-
-    except Exception as e:
-        print(f"[avatar-ws] WebSocket error for {session_id}: {e}")
-    finally:
-        print(f"[avatar-ws] Cleaning up: session={session_id}")
-        if _simli_session:
-            await manager.stop_session(session_id)
-        print(f"[avatar-ws] Done: session={session_id}")
-
-
 @app.websocket("/ws/call/{session_id}")
 async def call_room_websocket(
     websocket: WebSocket,
@@ -663,13 +538,17 @@ async def call_room_websocket(
                 from tools.tts_elevenlabs import generate_tts_elevenlabs_base64
                 from core.config import ELEVENLABS_API_KEY
                 
+                # Check Cartesia availability once
+                _use_cartesia = False
+                if gender == "female":
+                    from core.config import CARTESIA_API_KEY as _ckey
+                    if _ckey:
+                        _use_cartesia = True
+                
                 async def generate_tts_task(sentence_text: str, tts_start_ms: float):
+                    """ElevenLabs / FPT TTS — returns full audio as single blob."""
                     if ELEVENLABS_API_KEY:
-                        # Determine Voice ID based on gender
-                        # Placeholder for female voice (Bella), male voice uses default ELEVENLABS_VOICE_ID
-                        # User requested to use male voice for now. Replace None with female voice ID later.
-                        vid = None # "EXAVITQu4vr4xnSDxMaL" if gender == "female" else None
-                        b64_url, audio_fmt = await generate_tts_elevenlabs_base64(sentence_text, voice_id=vid)
+                        b64_url, audio_fmt = await generate_tts_elevenlabs_base64(sentence_text)
                         return b64_url, tts_start_ms, audio_fmt
                     elif TTS_API_KEY:
                         from tools.tts_client import generate_tts_fpt, wait_for_fpt_audio
@@ -683,20 +562,59 @@ async def call_room_websocket(
                 tts_queue = asyncio.Queue()
 
                 async def tts_sender_worker(ws: WebSocket):
+                    """Process TTS queue — handles both streaming chunks and full blobs."""
                     while True:
-                        task = await tts_queue.get()
-                        if task is None:
+                        item = await tts_queue.get()
+                        if item is None:
                             break
-                        audio_url, tts_start_ms, audio_fmt = await task
-                        if audio_url:
-                            total_tts_ms = int((time.perf_counter() - tts_start_ms) * 1000)
-                            print(f"[voice-latency] TTS Ready | Total: {total_tts_ms}ms | format: {audio_fmt}")
+                        
+                        kind, payload = item
+                        
+                        if kind == "stream":
+                            # Cartesia streaming: yield chunks as they arrive
+                            sentence_text, tts_start_ms = payload
+                            from tools.tts_cartesia import generate_tts_cartesia_stream
+                            chunk_idx = 0
+                            total_bytes = 0
+                            async for b64_chunk in generate_tts_cartesia_stream(sentence_text):
+                                pcm_len = len(b64_chunk) * 3 // 4  # approximate decoded size
+                                total_bytes += pcm_len
+                                if chunk_idx == 0:
+                                    ttfc_ms = int((time.perf_counter() - tts_start_ms) * 1000)
+                                    print(f"[Cartesia] TTFC: {ttfc_ms}ms | chunk 0: ~{pcm_len} bytes")
+                                await ws.send_json({
+                                    "type": "audio_chunk",
+                                    "data": b64_chunk,
+                                    "format": "pcm16",
+                                    "chunk_index": chunk_idx,
+                                    "metrics": metrics,
+                                })
+                                chunk_idx += 1
+                            
+                            # Signal end of this sentence's audio
+                            total_ms = int((time.perf_counter() - tts_start_ms) * 1000)
+                            print(f"[Cartesia] Stream done | {chunk_idx} chunks | ~{total_bytes:,} bytes | {total_ms}ms")
                             await ws.send_json({
-                                "type": "audio_url",
-                                "url": audio_url,
-                                "format": audio_fmt,
+                                "type": "audio_chunk_end",
+                                "format": "pcm16",
+                                "total_chunks": chunk_idx,
                                 "metrics": metrics,
                             })
+                        
+                        else:
+                            # ElevenLabs/FPT: await full task result
+                            task = payload
+                            audio_url, tts_start_ms, audio_fmt = await task
+                            if audio_url:
+                                total_tts_ms = int((time.perf_counter() - tts_start_ms) * 1000)
+                                print(f"[voice-latency] TTS Ready | Total: {total_tts_ms}ms | format: {audio_fmt}")
+                                await ws.send_json({
+                                    "type": "audio_url",
+                                    "url": audio_url,
+                                    "format": audio_fmt,
+                                    "metrics": metrics,
+                                })
+                        
                         tts_queue.task_done()
 
                 sender_task = asyncio.create_task(tts_sender_worker(websocket))
@@ -727,9 +645,13 @@ async def call_room_websocket(
                         print(f"[LATENCY][TIP-003] turn={_turn_counter} | first_tts_dispatch: {elapsed_ms(turn_start)}ms from turn_start")
                         first_tts_dispatched = True
                     
-                    # Tạo task TTS song song nhưng đưa vào queue để gửi tuần tự
-                    task = asyncio.create_task(generate_tts_task(sentence, time.perf_counter()))
-                    await tts_queue.put(task)
+                    if _use_cartesia:
+                        # Cartesia streaming: put generator metadata into queue
+                        await tts_queue.put(("stream", (sentence, time.perf_counter())))
+                    else:
+                        # ElevenLabs/FPT: create task and put into queue
+                        task = asyncio.create_task(generate_tts_task(sentence, time.perf_counter()))
+                        await tts_queue.put(("task", task))
 
                 # Chờ xử lý xong tất cả các câu trong queue
                 await tts_queue.put(None)
