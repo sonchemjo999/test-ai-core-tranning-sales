@@ -39,12 +39,15 @@ app = FastAPI(
     version="0.2.0",
 )
 
-# CORS — allow Next.js dev server
+# CORS — allow Next.js dev server + Android emulator (10.0.2.2 = host localhost)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://10.0.2.2:3000",
+        "http://10.0.2.2:8001",
+        "http://localhost:8001",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -434,6 +437,127 @@ def web_deep_read(body: DeepReadRequest, _: str = Depends(verify_api_key)):
         )
 
     return DeepReadResponse(**result)
+
+
+@app.websocket("/ws/avatar/{session_id}")
+async def avatar_websocket(
+    websocket: WebSocket,
+    session_id: str,
+    token: str | None = None,
+    gender: str = "male",
+):
+    """
+    Avatar Video WebSocket — bridges Simli AI avatar with the phone app.
+
+    Protocol:
+      1. Client (phone) connects with HMAC ticket in query param `token`
+      2. Server authenticates, starts a Simli avatar session
+      3. Server sends avatar metadata (type: "avatar_ready", avatar_url)
+      4. Bidirectional:
+         - Server → Phone: Simli video frames (binary JPEG) or JSON {type:"video_frame",data:"<base64>",format:"jpeg"}
+         - Phone  → Server: audio bytes for lip-sync (binary PCM16) or JSON {type:"audio",data:"<base64>"}
+    """
+    from api.ws_auth import verify_ws_token
+    from api.simli_avatar import get_simli_manager, encode_video_frame_for_websocket
+    import base64
+    import json
+
+    if not token:
+        await websocket.close(code=1008, reason="Missing auth token")
+        return
+
+    valid, reason = verify_ws_token(token, session_id)
+    if not valid:
+        await websocket.close(code=1008, reason=f"Auth failed: {reason}")
+        return
+
+    await websocket.accept()
+    manager = get_simli_manager()
+
+    if not manager.is_available:
+        try:
+            await websocket.send_json({
+                "type": "avatar_error",
+                "message": "Avatar service is not available on this server. "
+                           "Set SIMLI_API_KEY and SIMLI_ENABLED=true in core-ai/.env",
+            })
+        except Exception:
+            pass
+        await websocket.close(code=1011, reason="Avatar service unavailable")
+        return
+
+    # Forward frames directly to the phone WebSocket
+    async def frame_forwarder(frame_bytes: bytes) -> None:
+        try:
+            # Send as binary JPEG frame
+            await websocket.send_bytes(frame_bytes)
+        except Exception as e:
+            print(f"[avatar-ws] Failed to send frame to phone: {e}")
+
+    # Start Simli avatar session with frame callback
+    try:
+        session = await manager.start_session(
+            session_id=session_id,
+            gender=gender,
+            video_frame_callback=frame_forwarder,
+            error_callback=None,
+        )
+    except Exception as e:
+        try:
+            await websocket.send_json({
+                "type": "avatar_error",
+                "message": f"Failed to start avatar session: {e}",
+            })
+        except Exception:
+            pass
+        await websocket.close(code=1011, reason=f"Avatar session error: {e}")
+        return
+
+    try:
+        # Send avatar ready signal with static image URL
+        avatar_url = (
+            "https://api.dicebear.com/7.x/avataaars/png"
+            f"?seed=simli-{gender}&backgroundColor=c0aede&clothingColor=1d3557"
+        )
+        await websocket.send_json({
+            "type": "avatar_ready",
+            "avatar_url": avatar_url,
+            "gender": gender,
+        })
+
+        # Main message loop — phone sends audio, we forward to Simli
+        while True:
+            raw = await websocket.receive()
+            msg_type = raw.get("type", "")
+
+            # Binary: raw PCM16 audio bytes from phone mic
+            if msg_type == "binary":
+                audio_bytes = raw.get("bytes")
+                if audio_bytes:
+                    await manager.send_audio(session_id, audio_bytes)
+                continue
+
+            # Text: JSON message (audio in base64 or other commands)
+            if msg_type == "text":
+                text = raw.get("text", "{}")
+                try:
+                    msg = json.loads(text)
+                    if msg.get("type") == "audio":
+                        data = msg.get("data")
+                        if data:
+                            audio_bytes = base64.b64decode(data)
+                            await manager.send_audio(session_id, audio_bytes)
+                except Exception as e:
+                    print(f"[avatar-ws] Error processing phone message: {e}")
+                continue
+
+    except WebSocketDisconnect:
+        print(f"[avatar-ws] Phone disconnected: {session_id}")
+    except Exception as e:
+        print(f"[avatar-ws] WebSocket error for {session_id}: {e}")
+    finally:
+        await manager.stop_session(session_id)
+        print(f"[avatar-ws] Avatar session cleaned up: {session_id}")
 
 
 @app.websocket("/ws/call/{session_id}")
