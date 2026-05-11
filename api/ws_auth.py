@@ -68,3 +68,16 @@ def verify_ws_token(token: str, expected_session_id: str) -> tuple[bool, str]:
 
     except Exception as e:
         return False, f"parse_error:{type(e).__name__}"
+
+
+def issue_ws_token(session_id: str, user_id: str = "core-ai", ttl_seconds: int | None = None) -> tuple[str, int]:
+    """Issue a short-lived HMAC token for WebSocket endpoints."""
+    exp = int(time.time()) + (ttl_seconds or TTL)
+    payload = json.dumps(
+        {"user_id": user_id, "session_id": session_id, "exp": exp},
+        separators=(",", ":"),
+    ).encode()
+    payload_b64 = base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
+    sig = hmac.new(SECRET, payload, hashlib.sha256).digest()
+    sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()
+    return f"{payload_b64}.{sig_b64}", exp

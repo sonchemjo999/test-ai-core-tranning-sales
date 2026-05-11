@@ -4,10 +4,11 @@ Sale Train Agent — FastAPI wrapper around the LangGraph sales simulator (MVP).
 
 from __future__ import annotations
 
+import os
 import re
 import uuid
 
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, Depends, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from graph.graph import build_sales_graph
@@ -373,6 +374,31 @@ def web_generate_scenario(body: WebGenerateScenarioRequest, _: str = Depends(ver
         customer_persona=result["customer_persona"],
     )
 
+
+@app.post("/api/v1/training/sessions/{session_id}/avatar-token")
+def create_avatar_token(
+    session_id: str,
+    body: dict = Body(default_factory=dict),
+    _: str = Depends(verify_api_key),
+) -> dict[str, str | int]:
+    """Issue a WebRTC avatar signaling token for phone clients."""
+    from api.ws_auth import issue_ws_token, TTL
+
+    gender = str(body.get("gender") or "male")
+    user_id = str(body.get("user_id") or "phone")
+    token, exp = issue_ws_token(session_id=session_id, user_id=user_id, ttl_seconds=TTL)
+    ws_base = (
+        os.environ.get("CORE_AI_PUBLIC_WS_URL")
+        or os.environ.get("PUBLIC_WS_URL")
+        or "ws://localhost:8001"
+    ).rstrip("/")
+    query = f"token={token}&gender={gender}"
+    return {
+        "avatarSignalingWsUrl": f"{ws_base}/ws/signal/{session_id}?{query}",
+        "avatarSessionToken": token,
+        "expiresAt": exp,
+    }
+
 @app.post("/web/parse-document", response_model=ParseDocumentResponse)
 async def web_parse_document(
     file: UploadFile,
@@ -434,6 +460,45 @@ def web_deep_read(body: DeepReadRequest, _: str = Depends(verify_api_key)):
         )
 
     return DeepReadResponse(**result)
+
+
+@app.websocket("/ws/signal/{session_id}")
+async def avatar_signal_websocket(
+    websocket: WebSocket,
+    session_id: str,
+    token: str | None = None,
+    gender: str = "male",
+):
+    """WebRTC signaling endpoint for phone avatar video."""
+    from api.ws_auth import verify_ws_token
+
+    if not token:
+        await websocket.close(code=1008, reason="Missing auth token")
+        return
+
+    valid, reason = verify_ws_token(token, session_id)
+    if not valid:
+        await websocket.close(code=1008, reason=f"Auth failed: {reason}")
+        return
+
+    await websocket.accept()
+    try:
+        from api.webrtc_agent import AvatarWebRTCAgent
+
+        agent = AvatarWebRTCAgent(session_id=session_id, gender=gender)
+        await agent.run_signaling(websocket)
+    except WebSocketDisconnect:
+        print(f"Avatar signaling disconnected: {session_id}")
+    except Exception as e:
+        print(f"Avatar signaling error for {session_id}: {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
+        try:
+            await websocket.close(code=1011, reason="Avatar signaling error")
+        except Exception:
+            pass
 
 
 @app.websocket("/ws/call/{session_id}")

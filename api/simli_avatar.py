@@ -20,6 +20,7 @@ import asyncio
 import base64
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -77,6 +78,7 @@ class SimliSession:
     video_frame_callback: Callable[[bytes], None] | None = None
     error_callback: Callable[[str], None] | None = None
     _frame_reader_task: asyncio.Task | None = None
+    _last_frame_at: float = 0.0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def _cancel_frame_reader(self) -> None:
@@ -236,11 +238,16 @@ class SimliAvatarManager:
         """
         logger.info(f"[SimliAvatar] Frame reader started for session {session.session_id}")
         client = session.client
+        min_frame_interval = 1 / 30
 
         try:
             # Try the async iterator API first (preferred)
             if hasattr(client, "getVideoStreamIterator"):
                 async for frame in client.getVideoStreamIterator(targetFormat="rgb"):
+                    now = time.perf_counter()
+                    if now - session._last_frame_at < min_frame_interval:
+                        continue
+                    session._last_frame_at = now
                     if session.video_frame_callback:
                         try:
                             # Frame may be a PyAV VideoFrame — extract raw bytes
@@ -256,6 +263,11 @@ class SimliAvatarManager:
                 while True:
                     try:
                         frame = await client.getNextVideoFrame()
+                        now = time.perf_counter()
+                        if now - session._last_frame_at < min_frame_interval:
+                            await asyncio.sleep(0)
+                            continue
+                        session._last_frame_at = now
                         if frame and session.video_frame_callback:
                             raw_bytes = _extract_frame_bytes(frame)
                             if raw_bytes:
@@ -431,7 +443,7 @@ def _extract_frame_bytes(frame: Any) -> bytes | None:
 
     try:
         # PyAV VideoFrame — raw plane bytes
-        if hasattr(frame, "planes") and hasattr(frame, "planes[0]"):
+        if hasattr(frame, "planes") and frame.planes:
             plane = frame.planes[0]
             return bytes(plane)
     except Exception:

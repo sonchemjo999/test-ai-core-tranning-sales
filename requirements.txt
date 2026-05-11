@@ -3,6 +3,8 @@ fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 websockets>=12.0
 python-multipart>=0.0.9
+aiortc>=1.9.0
+aiortc-contrib-media>=1.9.0
 
 # HTTP client
 httpx>=0.27.0
