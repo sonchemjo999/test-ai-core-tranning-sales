@@ -15,7 +15,8 @@ from tools.tts_cartesia import generate_tts_cartesia_stream, generate_tts_cartes
 class TestCartesiaTTS:
     
     @patch("tools.tts_cartesia.CARTESIA_API_KEY", "test-key")
-    @patch("tools.tts_cartesia.CARTESIA_FEMALE_VOICE_ID", "test-voice")
+    @patch("tools.tts_cartesia.CARTESIA_MALE_VOICE_ID", "test-male-voice")
+    @patch("tools.tts_cartesia.CARTESIA_FEMALE_VOICE_ID", "test-female-voice")
     async def test_generate_tts_cartesia_stream_success(self):
         """Test streaming yields correctly parsed base64 chunks."""
         
@@ -58,7 +59,8 @@ class TestCartesiaTTS:
         assert chunks[1] == "chunk2_base64"
 
     @patch("tools.tts_cartesia.CARTESIA_API_KEY", "test-key")
-    @patch("tools.tts_cartesia.CARTESIA_FEMALE_VOICE_ID", "test-voice")
+    @patch("tools.tts_cartesia.CARTESIA_MALE_VOICE_ID", "test-male-voice")
+    @patch("tools.tts_cartesia.CARTESIA_FEMALE_VOICE_ID", "test-female-voice")
     async def test_generate_tts_cartesia_stream_error(self):
         """Test streaming handles HTTP errors gracefully without raising."""
         mock_response = AsyncMock()
@@ -90,7 +92,8 @@ class TestCartesiaTTS:
         assert len(chunks) == 0
 
     @patch("tools.tts_cartesia.CARTESIA_API_KEY", "test-key")
-    @patch("tools.tts_cartesia.CARTESIA_FEMALE_VOICE_ID", "test-voice")
+    @patch("tools.tts_cartesia.CARTESIA_MALE_VOICE_ID", "test-male-voice")
+    @patch("tools.tts_cartesia.CARTESIA_FEMALE_VOICE_ID", "test-female-voice")
     async def test_generate_tts_cartesia_base64_success(self):
         """Test full assembly base64 returns correct data URI."""
         fake_pcm = b"\x00\x01\x02\x03"
@@ -107,7 +110,8 @@ class TestCartesiaTTS:
         assert uri == f"data:audio/pcm;base64,{b64_encoded}"
 
     @patch("tools.tts_cartesia.CARTESIA_API_KEY", "test-key")
-    @patch("tools.tts_cartesia.CARTESIA_FEMALE_VOICE_ID", "test-voice")
+    @patch("tools.tts_cartesia.CARTESIA_MALE_VOICE_ID", "test-male-voice")
+    @patch("tools.tts_cartesia.CARTESIA_FEMALE_VOICE_ID", "test-female-voice")
     async def test_generate_tts_cartesia_base64_empty(self):
         """Test full assembly gracefully handles empty chunks."""
         # Yield nothing
@@ -119,3 +123,51 @@ class TestCartesiaTTS:
             
         assert uri is None
         assert fmt == "mp3"
+
+    @patch("tools.tts_cartesia.CARTESIA_API_KEY", "test-key")
+    @patch("tools.tts_cartesia.CARTESIA_MALE_VOICE_ID", "test-male-voice")
+    @patch("tools.tts_cartesia.CARTESIA_FEMALE_VOICE_ID", "test-female-voice")
+    async def test_voice_id_override(self):
+        """Test that explicit voice_id parameter overrides the default."""
+        captured_payload = {}
+
+        fake_chunks = ['data: {"data": "abc"}', 'data: [DONE]']
+
+        async def fake_aiter_lines():
+            for line in fake_chunks:
+                yield line
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.aiter_lines = fake_aiter_lines
+
+        mock_client = MagicMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_stream_ctx = MagicMock()
+        mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_stream_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+
+        def capture_post(url, headers, json):
+            captured_payload["url"] = url
+            captured_payload["headers"] = headers
+            captured_payload["json"] = json
+            return mock_client
+
+        with patch("tools.tts_cartesia.httpx.AsyncClient", side_effect=capture_post):
+            chunks = []
+            async for chunk in generate_tts_cartesia_stream("Xin chào", voice_id="my-custom-voice"):
+                chunks.append(chunk)
+
+        assert len(chunks) == 1
+        assert captured_payload["json"]["voice"]["id"] == "my-custom-voice"
+
+        captured_payload.clear()
+
+        with patch("tools.tts_cartesia.httpx.AsyncClient", side_effect=capture_post):
+            chunks = []
+            async for chunk in generate_tts_cartesia_stream("Xin chào", voice_id=None):
+                chunks.append(chunks)
+
+        assert captured_payload["json"]["voice"]["id"] == "test-female-voice"

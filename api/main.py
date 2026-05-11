@@ -531,24 +531,18 @@ async def call_room_websocket(
                     time_remaining_seconds=time_remaining,
                 )
                 print(f"[LATENCY][TIP-003] turn={_turn_counter} | stream_create: {(time.perf_counter() - stream_create_start)*1000:.0f}ms")
-                
+
+                # Check Cartesia availability once per turn
+                from core.config import CARTESIA_API_KEY as _ckey, CARTESIA_FEMALE_VOICE_ID, CARTESIA_MALE_VOICE_ID
+                _use_cartesia = bool(_ckey)
+
                 full_bot_text = ""
                 
-                import asyncio
-                from tools.tts_elevenlabs import generate_tts_elevenlabs_base64
-                from core.config import ELEVENLABS_API_KEY
-                
-                # Check Cartesia availability once
-                _use_cartesia = False
-                if gender == "female":
-                    from core.config import CARTESIA_API_KEY as _ckey
-                    if _ckey:
-                        _use_cartesia = True
-                
                 async def generate_tts_task(sentence_text: str, tts_start_ms: float):
-                    """ElevenLabs / FPT TTS — returns full audio as single blob."""
-                    if ELEVENLABS_API_KEY:
-                        b64_url, audio_fmt = await generate_tts_elevenlabs_base64(sentence_text)
+                    """Cartesia / FPT TTS — returns full audio as single blob."""
+                    if _ckey:
+                        voice_id = CARTESIA_FEMALE_VOICE_ID if gender == "female" else CARTESIA_MALE_VOICE_ID
+                        b64_url, audio_fmt = await generate_tts_cartesia_base64(sentence_text, voice_id)
                         return b64_url, tts_start_ms, audio_fmt
                     elif TTS_API_KEY:
                         from tools.tts_client import generate_tts_fpt, wait_for_fpt_audio
@@ -567,16 +561,15 @@ async def call_room_websocket(
                         item = await tts_queue.get()
                         if item is None:
                             break
-                        
+
                         kind, payload = item
-                        
+
                         if kind == "stream":
                             # Cartesia streaming: yield chunks as they arrive
-                            sentence_text, tts_start_ms = payload
-                            from tools.tts_cartesia import generate_tts_cartesia_stream
+                            sentence_text, tts_start_ms, _voice_id = payload
                             chunk_idx = 0
                             total_bytes = 0
-                            async for b64_chunk in generate_tts_cartesia_stream(sentence_text):
+                            async for b64_chunk in generate_tts_cartesia_stream(sentence_text, _voice_id):
                                 pcm_len = len(b64_chunk) * 3 // 4  # approximate decoded size
                                 total_bytes += pcm_len
                                 if chunk_idx == 0:
@@ -590,7 +583,7 @@ async def call_room_websocket(
                                     "metrics": metrics,
                                 })
                                 chunk_idx += 1
-                            
+
                             # Signal end of this sentence's audio
                             total_ms = int((time.perf_counter() - tts_start_ms) * 1000)
                             print(f"[Cartesia] Stream done | {chunk_idx} chunks | ~{total_bytes:,} bytes | {total_ms}ms")
@@ -602,7 +595,7 @@ async def call_room_websocket(
                             })
                         
                         else:
-                            # ElevenLabs/FPT: await full task result
+                            # Cartesia/FPT: await full task result
                             task = payload
                             audio_url, tts_start_ms, audio_fmt = await task
                             if audio_url:
@@ -647,9 +640,10 @@ async def call_room_websocket(
                     
                     if _use_cartesia:
                         # Cartesia streaming: put generator metadata into queue
-                        await tts_queue.put(("stream", (sentence, time.perf_counter())))
+                        _voice_id = CARTESIA_FEMALE_VOICE_ID if gender == "female" else CARTESIA_MALE_VOICE_ID
+                        await tts_queue.put(("stream", (sentence, time.perf_counter(), _voice_id)))
                     else:
-                        # ElevenLabs/FPT: create task and put into queue
+                        # FPT TTS: create task and put into queue
                         task = asyncio.create_task(generate_tts_task(sentence, time.perf_counter()))
                         await tts_queue.put(("task", task))
 

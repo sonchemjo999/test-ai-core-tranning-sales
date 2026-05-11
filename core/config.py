@@ -23,11 +23,7 @@ TTS_API_KEY = os.getenv("TTS_API_KEY", "").strip()
 TTS_VOICE = os.getenv("TTS_VOICE", "minhquang")
 TTS_SPEED = os.getenv("TTS_SPEED", "1")
 
-# ElevenLabs Text-to-Speech
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
-ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
-
-# Cartesia Text-to-Speech (female voice — sonic-3.5, Vietnamese)
+# Cartesia Text-to-Speech (male / female voice — sonic-3.5, Vietnamese)
 CARTESIA_API_KEY         = os.getenv("CARTESIA_API_KEY", "").strip()
+CARTESIA_MALE_VOICE_ID   = os.getenv("CARTESIA_MALE_VOICE_ID", "CAAD5E2A-0BB2-4CB6-89C0-5D09C7B3D94B")
 CARTESIA_FEMALE_VOICE_ID = os.getenv("CARTESIA_FEMALE_VOICE_ID", "935a9060-373c-49e4-b078-f4ea6326987a")

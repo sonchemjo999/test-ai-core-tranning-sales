@@ -30,7 +30,7 @@ B2B Sales Training Platform — AI-powered role-play simulator and coach built w
     ├── fetch_url.py
     ├── search_web.py
     ├── tts_client.py     # FPT.AI TTS
-    └── tts_elevenlabs.py # ElevenLabs TTS
+    ├── tts_cartesia.py   # Cartesia TTS (male / female voice)
 ```
 
 ## Quick Start

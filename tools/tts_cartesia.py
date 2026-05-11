@@ -1,7 +1,7 @@
-"""Cartesia TTS — sonic-3.5, Vietnamese female voice via SSE streaming.
+"""Cartesia TTS — sonic-3.5, Vietnamese male/female voice via SSE streaming.
 
-Returns base64 PCM 16kHz s16le audio, same format as ElevenLabs PCM path
-so it's directly compatible with the Simli lip-sync pipeline.
+Returns base64 PCM 16kHz s16le audio, directly compatible with the Simli lip-sync
+pipeline. Supports both male and female voice IDs via the `voice_id` parameter.
 
 Provides two modes:
   - generate_tts_cartesia_base64()  — full assembly (legacy)
@@ -14,17 +14,18 @@ from typing import AsyncGenerator
 
 import httpx
 
-from core.config import CARTESIA_API_KEY, CARTESIA_FEMALE_VOICE_ID
+from core.config import CARTESIA_API_KEY, CARTESIA_MALE_VOICE_ID, CARTESIA_FEMALE_VOICE_ID
 
 _CARTESIA_SSE_URL = "https://api.cartesia.ai/tts/sse"
 _CARTESIA_API_VERSION = "2025-04-16"
 
 
-def _build_payload(text: str) -> dict:
+def _build_payload(text: str, voice_id: str | None = None) -> dict:
+    voice = voice_id or CARTESIA_FEMALE_VOICE_ID
     return {
         "model_id": "sonic-3.5",
         "transcript": text,
-        "voice": {"mode": "id", "id": CARTESIA_FEMALE_VOICE_ID},
+        "voice": {"mode": "id", "id": voice},
         "output_format": {
             "container": "raw",
             "encoding": "pcm_s16le",
@@ -44,11 +45,15 @@ def _build_headers() -> dict:
 
 # ── Streaming mode (low TTFA) ────────────────────────────────────────────────
 
-async def generate_tts_cartesia_stream(text: str) -> AsyncGenerator[str, None]:
+async def generate_tts_cartesia_stream(
+    text: str, voice_id: str | None = None
+) -> AsyncGenerator[str, None]:
     """Yield individual base64 PCM chunks as they arrive from Cartesia SSE.
 
     Each yielded value is a raw base64 string (NOT a data URI).
     The caller is responsible for wrapping/sending as needed.
+
+    voice_id optionally overrides the default voice (male/female).
 
     Yields nothing if the request fails.
     """
@@ -60,7 +65,7 @@ async def generate_tts_cartesia_stream(text: str) -> AsyncGenerator[str, None]:
         async with httpx.AsyncClient(timeout=15.0) as client:
             async with client.stream(
                 "POST", _CARTESIA_SSE_URL,
-                headers=_build_headers(), json=_build_payload(text),
+                headers=_build_headers(), json=_build_payload(text, voice_id),
             ) as response:
                 if response.status_code != 200:
                     body = await response.aread()
@@ -90,8 +95,12 @@ async def generate_tts_cartesia_stream(text: str) -> AsyncGenerator[str, None]:
 
 # ── Full-assembly mode (legacy / fallback) ────────────────────────────────────
 
-async def generate_tts_cartesia_base64(text: str) -> tuple[str | None, str]:
+async def generate_tts_cartesia_base64(
+    text: str, voice_id: str | None = None
+) -> tuple[str | None, str]:
     """Generate TTS via Cartesia sonic-3.5 SSE streaming — full assembly.
+
+    voice_id optionally overrides the default voice (male/female).
 
     Returns:
         (data_uri, format_tag):
@@ -105,7 +114,7 @@ async def generate_tts_cartesia_base64(text: str) -> tuple[str | None, str]:
     try:
         pcm_chunks: list[bytes] = []
 
-        async for b64_chunk in generate_tts_cartesia_stream(text):
+        async for b64_chunk in generate_tts_cartesia_stream(text, voice_id):
             pcm_chunks.append(base64.b64decode(b64_chunk))
 
         if not pcm_chunks:
