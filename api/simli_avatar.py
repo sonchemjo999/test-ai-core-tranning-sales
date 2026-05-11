@@ -7,9 +7,11 @@ the backend:
 1. Authenticates the connection via HMAC ticket
 2. Starts a Simli avatar session (male/female based on gender param)
 3. Relays audio from TTS pipeline to Simli
-4. Receives video frames from Simli and forwards them to the phone via WebSocket
+4. Receives video frames from Simli (via polling) and forwards them to the phone via WebSocket
 
-This way, the phone app receives an animated avatar without needing the Simli SDK.
+Simli SDK reference:
+  pip install simli-ai
+  Docs: https://docs.simli.ai
 """
 
 from __future__ import annotations
@@ -30,17 +32,16 @@ from core.config import (
 
 logger = logging.getLogger(__name__)
 
-# Default face IDs (can be overridden via environment)
 DEFAULT_MALE_FACE_ID = "dd10cb5a-d31d-4f12-b69f-6db3383c006e"
 DEFAULT_FEMALE_FACE_ID = "cace3ef7-a4c4-425d-a8cf-a5358eb0c427"
 
-# Fallback IDs if env vars not set
 _MALE_FACE_ID = SIMLI_MALE_FACE_ID or DEFAULT_MALE_FACE_ID
 _FEMALE_FACE_ID = SIMLI_FEMALE_FACE_ID or DEFAULT_FEMALE_FACE_ID
 
-# Simli client class references — loaded lazily to avoid import errors when package not installed
+# Lazy SDK references — loaded on first use to avoid crash if package not installed
 _simli_client_cls: type | None = None
 _simli_config_cls: type | None = None
+
 
 def _load_simli_sdk() -> bool:
     """Try to import simli-ai SDK. Returns True if available, False otherwise."""
@@ -49,6 +50,7 @@ def _load_simli_sdk() -> bool:
         return True
     try:
         from simli import SimliClient, SimliConfig
+
         _simli_client_cls = SimliClient
         _simli_config_cls = SimliConfig
         return True
@@ -74,7 +76,17 @@ class SimliSession:
     is_connected: bool = False
     video_frame_callback: Callable[[bytes], None] | None = None
     error_callback: Callable[[str], None] | None = None
+    _frame_reader_task: asyncio.Task | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    async def _cancel_frame_reader(self) -> None:
+        if self._frame_reader_task:
+            self._frame_reader_task.cancel()
+            try:
+                await self._frame_reader_task
+            except asyncio.CancelledError:
+                pass
+            self._frame_reader_task = None
 
 
 class SimliAvatarManager:
@@ -84,7 +96,7 @@ class SimliAvatarManager:
     Handles:
     - Starting/stopping Simli WebRTC connections per session_id
     - Sending PCM16 audio chunks to Simli for lip-sync animation
-    - Receiving video frames from Simli and routing to the phone WebSocket
+    - Receiving video frames from Simli (via polling) and routing to the phone WebSocket
     - Cleanup on disconnect
     """
 
@@ -107,7 +119,6 @@ class SimliAvatarManager:
         self._sessions_lock = asyncio.Lock()
 
         self._simli_available = False
-
         self._check_simli_available()
 
     def _check_simli_available(self) -> None:
@@ -194,41 +205,87 @@ class SimliAvatarManager:
                 raise
 
     async def _connect_to_simli(self, session: SimliSession) -> None:
-        """Establish WebRTC connection to Simli."""
+        """Establish WebRTC connection to Simli and start frame reader."""
         if not self._simli_available:
             raise RuntimeError("Simli client not available")
 
         if not _load_simli_sdk():
             raise RuntimeError("simli-ai package not installed")
 
+        config = _simli_config_cls(faceId=session.face_id)
+        client = _simli_client_cls(api_key=SIMLI_API_KEY, config=config)
+
+        await client.start()
+        session.client = client
+        session.is_connected = True
+
+        # Start background task to poll frames from Simli and forward via callback
+        session._frame_reader_task = asyncio.create_task(
+            self._frame_reader_loop(session)
+        )
+
+        logger.info(f"[SimliAvatar] Connected to Simli for session {session.session_id}")
+
+    async def _frame_reader_loop(self, session: SimliSession) -> None:
+        """
+        Background task that continuously polls video frames from Simli's WebRTC stream
+        and forwards them to the registered callback.
+
+        The Simli SDK provides frames via getVideoStreamIterator() or getNextVideoFrame().
+        We poll in a loop and invoke the callback for each received frame.
+        """
+        logger.info(f"[SimliAvatar] Frame reader started for session {session.session_id}")
+        client = session.client
+
         try:
-            config = _simli_config_cls(faceId=session.face_id)
-            client = _simli_client_cls(api_key=SIMLI_API_KEY, config=config)
-
-            if hasattr(client, "set_video_frame_callback"):
-                if session.video_frame_callback:
-                    client.set_video_frame_callback(
-                        lambda frame: self._handle_video_frame(session.session_id, frame)
-                    )
-
-            await client.start()
-            session.client = client
-            session.is_connected = True
-            logger.info(f"[SimliAvatar] Connected to Simli for session {session.session_id}")
-
+            # Try the async iterator API first (preferred)
+            if hasattr(client, "getVideoStreamIterator"):
+                async for frame in client.getVideoStreamIterator(targetFormat="rgb"):
+                    if session.video_frame_callback:
+                        try:
+                            # Frame may be a PyAV VideoFrame — extract raw bytes
+                            raw_bytes = _extract_frame_bytes(frame)
+                            if raw_bytes:
+                                session.video_frame_callback(raw_bytes)
+                        except Exception as e:
+                            logger.error(
+                                f"[SimliAvatar] Callback error for {session.session_id}: {e}"
+                            )
+            # Fallback: poll with getNextVideoFrame
+            elif hasattr(client, "getNextVideoFrame"):
+                while True:
+                    try:
+                        frame = await client.getNextVideoFrame()
+                        if frame and session.video_frame_callback:
+                            raw_bytes = _extract_frame_bytes(frame)
+                            if raw_bytes:
+                                session.video_frame_callback(raw_bytes)
+                    except StopIteration:
+                        break
+                    except Exception as e:
+                        logger.error(
+                            f"[SimliAvatar] getNextVideoFrame error for {session.session_id}: {e}"
+                        )
+                        await asyncio.sleep(0.1)
+            else:
+                logger.warning(
+                    f"[SimliAvatar] No frame iterator method found on SimliClient. "
+                    f"Avatar will receive no frames. Available: "
+                    f"{[m for m in dir(client) if not m.startswith('_')]}"
+                )
+        except asyncio.CancelledError:
+            logger.info(f"[SimliAvatar] Frame reader cancelled for session {session.session_id}")
         except Exception as e:
-            session.is_connected = False
-            logger.error(f"[SimliAvatar] Connection failed for {session.session_id}: {e}")
-            raise
-
-    def _handle_video_frame(self, session_id: str, frame: bytes) -> None:
-        """Handle incoming video frame from Simli."""
-        try:
-            session = self._sessions.get(session_id)
-            if session and session.video_frame_callback:
-                session.video_frame_callback(frame)
-        except Exception as e:
-            logger.error(f"[SimliAvatar] Error handling video frame for {session_id}: {e}")
+            logger.error(
+                f"[SimliAvatar] Frame reader error for {session.session_id}: {e}"
+            )
+            if session.error_callback:
+                try:
+                    session.error_callback(str(e))
+                except Exception:
+                    pass
+        finally:
+            logger.info(f"[SimliAvatar] Frame reader stopped for session {session.session_id}")
 
     async def send_audio(self, session_id: str, audio_bytes: bytes) -> bool:
         """
@@ -253,28 +310,23 @@ class SimliAvatarManager:
             return False
 
         try:
-            if hasattr(session.client, "send_audio"):
+            # Try send() method (standard Simli SDK method)
+            if hasattr(session.client, "send"):
+                await session.client.send(audio_bytes)
+            elif hasattr(session.client, "send_audio"):
                 await session.client.send_audio(audio_bytes)
-            elif hasattr(session.client, "send"):
-                await session.client.send(audio_bytes)
             else:
-                await session.client.send(audio_bytes)
+                logger.warning(
+                    f"[SimliAvatar] No send method found on SimliClient for {session_id}"
+                )
+                return False
             return True
         except Exception as e:
             logger.error(f"[SimliAvatar] send_audio failed for {session_id}: {e}")
             return False
 
     async def send_text(self, session_id: str, text: str) -> bool:
-        """
-        Send text to Simli for avatar animation (if supported).
-
-        Args:
-            session_id: Session identifier
-            text: Text to speak
-
-        Returns:
-            True if text was sent successfully, False otherwise
-        """
+        """Send text to Simli for avatar animation (if supported)."""
         async with self._sessions_lock:
             session = self._sessions.get(session_id)
 
@@ -298,6 +350,9 @@ class SimliAvatarManager:
         if not session:
             logger.debug(f"[SimliAvatar] stop_session: session not found: {session_id}")
             return
+
+        # Cancel frame reader first
+        await session._cancel_frame_reader()
 
         if session.client:
             try:
@@ -335,38 +390,62 @@ def get_simli_manager() -> SimliAvatarManager:
     return SimliAvatarManager()
 
 
-async def simli_send_audio_from_url(session_id: str, audio_url: str) -> bool:
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _extract_frame_bytes(frame: Any) -> bytes | None:
     """
-    Fetch audio from URL and send it to Simli.
+    Extract raw bytes from a Simli video frame.
 
-    This is useful when the TTS pipeline returns an audio URL (e.g., from FPT.AI)
-    and we want to also send that audio to Simli for avatar animation.
+    The Simli SDK returns PyAV VideoFrame objects. We need to extract
+    the raw pixel data as bytes for transmission over WebSocket.
 
-    Args:
-        session_id: Session identifier
-        audio_url: URL to fetch audio from
-
-    Returns:
-        True if audio was fetched and sent successfully
+    Supports multiple frame formats:
+    - VideoFrame with .to_ndarray() (NumPy array)
+    - VideoFrame with .planes[0] (raw plane data)
+    - Already a bytes object
     """
-    import httpx
+    if frame is None:
+        return None
 
-    manager = get_simli_manager()
-
-    if not await manager.has_active_session(session_id):
-        return False
+    # Already bytes
+    if isinstance(frame, bytes):
+        return frame
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(audio_url)
-            response.raise_for_status()
-            audio_bytes = response.content
+        # PyAV VideoFrame — .to_ndarray() returns (H, W, 3) RGB numpy array
+        if hasattr(frame, "to_ndarray"):
+            import numpy as np
 
-        return await manager.send_audio(session_id, audio_bytes)
+            arr = frame.to_ndarray()
+            # Convert RGB to BGR if needed (OpenCV convention)
+            if arr.ndim == 3 and arr.shape[2] == 3:
+                arr = arr[:, :, ::-1]
+            # Encode as JPEG for WebSocket transmission
+            import cv2
 
-    except Exception as e:
-        logger.error(f"[SimliAvatar] Failed to fetch/send audio for {session_id}: {e}")
-        return False
+            _, jpeg_bytes = cv2.imencode(".jpg", arr)
+            return jpeg_bytes.tobytes()
+    except Exception:
+        pass
+
+    try:
+        # PyAV VideoFrame — raw plane bytes
+        if hasattr(frame, "planes") and hasattr(frame, "planes[0]"):
+            plane = frame.planes[0]
+            return bytes(plane)
+    except Exception:
+        pass
+
+    try:
+        # Direct bytes attribute
+        if hasattr(frame, "to_bytes"):
+            return frame.to_bytes()
+    except Exception:
+        pass
+
+    logger.warning(f"[SimliAvatar] Could not extract bytes from frame type: {type(frame)}")
+    return None
 
 
 def encode_video_frame_for_websocket(frame: bytes) -> str:
