@@ -510,7 +510,10 @@ async def avatar_signal_websocket(
     except WebSocketDisconnect:
         print(f"Avatar signaling disconnected: {session_id}")
     except Exception as e:
+        import traceback
+
         print(f"Avatar signaling error for {session_id}: {e}")
+        traceback.print_exc()
         try:
             await websocket.send_json({"type": "error", "message": str(e)})
         except Exception:

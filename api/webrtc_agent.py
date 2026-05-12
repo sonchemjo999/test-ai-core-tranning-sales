@@ -246,6 +246,9 @@ class AvatarWebRTCAgent:
         if self._pc is None:
             await self.start()
 
+        if "m=video" not in sdp:
+            raise ValueError("Avatar WebRTC offer is missing a recvonly video transceiver")
+
         offer = _rtc["RTCSessionDescription"](sdp=sdp, type=offer_type)
         await self._pc.setRemoteDescription(offer)
         answer = await self._pc.createAnswer()
