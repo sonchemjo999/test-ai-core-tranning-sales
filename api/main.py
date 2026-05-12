@@ -446,8 +446,15 @@ async def get_simli_token(
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
         resp = await client.post(
-            "https://api.simli.ai/startAudioToVideoSession",
-            json={"apiKey": SIMLI_API_KEY, "faceId": face_id},
+            "https://api.simli.ai/compose/token",
+            headers={"x-simli-api-key": SIMLI_API_KEY},
+            json={
+                "faceId": face_id,
+                "handleSilence": True,
+                "maxSessionLength": 600,
+                "maxIdleTime": 120,
+                "audioInputFormat": "pcm16",
+            },
         )
 
     if resp.status_code != 200:
@@ -457,7 +464,7 @@ async def get_simli_token(
         )
 
     data = resp.json()
-    session_token = data.get("data", {}).get("sessionToken") or data.get("sessionToken")
+    session_token = data.get("data", {}).get("session_token") or data.get("sessionToken") or data.get("session_token")
     if not session_token:
         raise HTTPException(status_code=502, detail="Simli API response missing sessionToken.")
 
