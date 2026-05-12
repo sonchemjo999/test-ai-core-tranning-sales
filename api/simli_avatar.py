@@ -33,6 +33,13 @@ from core.config import (
 
 logger = logging.getLogger(__name__)
 
+
+def _simli_log(message: str, *args: Any) -> None:
+    formatted = message % args if args else message
+    print(f"[SimliAvatar] {formatted}", flush=True)
+    logger.info(formatted)
+
+
 DEFAULT_MALE_FACE_ID = "dd10cb5a-d31d-4f12-b69f-6db3383c006e"
 DEFAULT_FEMALE_FACE_ID = "cace3ef7-a4c4-425d-a8cf-a5358eb0c427"
 
@@ -126,16 +133,16 @@ class SimliAvatarManager:
     def _check_simli_available(self) -> None:
         """Check if simli-ai package is installed and API key is configured."""
         if not SIMLI_ENABLED:
-            logger.info("[SimliAvatar] Disabled via SIMLI_ENABLED=false")
+            _simli_log("disabled via SIMLI_ENABLED=false")
             return
 
         if not SIMLI_API_KEY:
-            logger.warning("[SimliAvatar] SIMLI_API_KEY not set — avatar streaming disabled")
+            _simli_log("SIMLI_API_KEY not set; avatar streaming disabled")
             return
 
         if _load_simli_sdk():
             self._simli_available = True
-            logger.info("[SimliAvatar] simli-ai package loaded successfully")
+            _simli_log("simli-ai package loaded successfully")
 
     @property
     def is_available(self) -> bool:
@@ -191,14 +198,24 @@ class SimliAvatarManager:
             )
 
             try:
+                _simli_log(
+                    "starting session=%s gender=%s face_id=%s",
+                    session_id,
+                    gender,
+                    face_id,
+                )
                 await self._connect_to_simli(session)
                 self._sessions[session_id] = session
-                logger.info(
-                    f"[SimliAvatar] Session started: {session_id}, gender={gender}, face_id={face_id}"
+                _simli_log(
+                    "session started=%s gender=%s face_id=%s",
+                    session_id,
+                    gender,
+                    face_id,
                 )
                 return session
             except Exception as e:
-                logger.error(f"[SimliAvatar] Failed to start session {session_id}: {e}")
+                _simli_log("failed to start session=%s error=%s", session_id, e)
+                logger.exception("[SimliAvatar] start_session traceback %s", session_id)
                 if error_callback:
                     try:
                         error_callback(str(e))
@@ -214,19 +231,29 @@ class SimliAvatarManager:
         if not _load_simli_sdk():
             raise RuntimeError("simli-ai package not installed")
 
+        _simli_log(
+            "connecting to Simli session=%s face_id=%s",
+            session.session_id,
+            session.face_id,
+        )
         config = _simli_config_cls(faceId=session.face_id)
         client = _simli_client_cls(api_key=SIMLI_API_KEY, config=config)
 
         await client.start()
         session.client = client
         session.is_connected = True
+        _simli_log(
+            "client started session=%s methods=%s",
+            session.session_id,
+            [m for m in dir(client) if not m.startswith("_")][:30],
+        )
 
         # Start background task to poll frames from Simli and forward via callback
         session._frame_reader_task = asyncio.create_task(
             self._frame_reader_loop(session)
         )
 
-        logger.info(f"[SimliAvatar] Connected to Simli for session {session.session_id}")
+        _simli_log("connected to Simli session=%s", session.session_id)
 
     async def _frame_reader_loop(self, session: SimliSession) -> None:
         """
@@ -236,7 +263,7 @@ class SimliAvatarManager:
         The Simli SDK provides frames via getVideoStreamIterator() or getNextVideoFrame().
         We poll in a loop and invoke the callback for each received frame.
         """
-        logger.info(f"[SimliAvatar] Frame reader started for session {session.session_id}")
+        _simli_log("frame reader started session=%s", session.session_id)
         client = session.client
         min_frame_interval = 1 / 30
 
@@ -280,24 +307,23 @@ class SimliAvatarManager:
                         )
                         await asyncio.sleep(0.1)
             else:
-                logger.warning(
-                    f"[SimliAvatar] No frame iterator method found on SimliClient. "
-                    f"Avatar will receive no frames. Available: "
-                    f"{[m for m in dir(client) if not m.startswith('_')]}"
+                _simli_log(
+                    "no frame iterator method session=%s available=%s",
+                    session.session_id,
+                    [m for m in dir(client) if not m.startswith("_")],
                 )
         except asyncio.CancelledError:
-            logger.info(f"[SimliAvatar] Frame reader cancelled for session {session.session_id}")
+            _simli_log("frame reader cancelled session=%s", session.session_id)
         except Exception as e:
-            logger.error(
-                f"[SimliAvatar] Frame reader error for {session.session_id}: {e}"
-            )
+            _simli_log("frame reader error session=%s error=%s", session.session_id, e)
+            logger.exception("[SimliAvatar] frame reader traceback %s", session.session_id)
             if session.error_callback:
                 try:
                     session.error_callback(str(e))
                 except Exception:
                     pass
         finally:
-            logger.info(f"[SimliAvatar] Frame reader stopped for session {session.session_id}")
+            _simli_log("frame reader stopped session=%s", session.session_id)
 
     async def send_audio(self, session_id: str, audio_bytes: bytes) -> bool:
         """
@@ -314,11 +340,11 @@ class SimliAvatarManager:
             session = self._sessions.get(session_id)
 
         if not session:
-            logger.warning(f"[SimliAvatar] send_audio: session not found: {session_id}")
+            _simli_log("send_audio session not found=%s bytes=%s", session_id, len(audio_bytes))
             return False
 
         if not session.is_connected or not session.client:
-            logger.warning(f"[SimliAvatar] send_audio: session not connected: {session_id}")
+            _simli_log("send_audio session not connected=%s bytes=%s", session_id, len(audio_bytes))
             return False
 
         try:
@@ -328,13 +354,11 @@ class SimliAvatarManager:
             elif hasattr(session.client, "send_audio"):
                 await session.client.send_audio(audio_bytes)
             else:
-                logger.warning(
-                    f"[SimliAvatar] No send method found on SimliClient for {session_id}"
-                )
+                _simli_log("no send method on client session=%s", session_id)
                 return False
             return True
         except Exception as e:
-            logger.error(f"[SimliAvatar] send_audio failed for {session_id}: {e}")
+            _simli_log("send_audio failed session=%s error=%s", session_id, e)
             return False
 
     async def send_text(self, session_id: str, text: str) -> bool:
