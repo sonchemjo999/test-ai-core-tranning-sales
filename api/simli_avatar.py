@@ -75,7 +75,7 @@ class SimliSession:
     face_id: str
     client: Any | None = None
     is_connected: bool = False
-    video_frame_callback: Callable[[bytes], None] | None = None
+    video_frame_callback: Callable[[Any], None] | None = None
     error_callback: Callable[[str], None] | None = None
     _frame_reader_task: asyncio.Task | None = None
     _last_frame_at: float = 0.0
@@ -153,7 +153,7 @@ class SimliAvatarManager:
         self,
         session_id: str,
         gender: str = "male",
-        video_frame_callback: Callable[[bytes], None] | None = None,
+        video_frame_callback: Callable[[Any], None] | None = None,
         error_callback: Callable[[str], None] | None = None,
     ) -> SimliSession:
         """
@@ -251,9 +251,9 @@ class SimliAvatarManager:
                     if session.video_frame_callback:
                         try:
                             # Frame may be a PyAV VideoFrame — extract raw bytes
-                            raw_bytes = _extract_frame_bytes(frame)
-                            if raw_bytes:
-                                session.video_frame_callback(raw_bytes)
+                            frame_payload = _extract_frame_payload(frame)
+                            if frame_payload is not None:
+                                session.video_frame_callback(frame_payload)
                         except Exception as e:
                             logger.error(
                                 f"[SimliAvatar] Callback error for {session.session_id}: {e}"
@@ -269,9 +269,9 @@ class SimliAvatarManager:
                             continue
                         session._last_frame_at = now
                         if frame and session.video_frame_callback:
-                            raw_bytes = _extract_frame_bytes(frame)
-                            if raw_bytes:
-                                session.video_frame_callback(raw_bytes)
+                            frame_payload = _extract_frame_payload(frame)
+                            if frame_payload is not None:
+                                session.video_frame_callback(frame_payload)
                     except StopIteration:
                         break
                     except Exception as e:
@@ -403,6 +403,40 @@ def get_simli_manager() -> SimliAvatarManager:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _extract_frame_payload(frame: Any) -> Any | None:
+    """
+    Normalize a Simli video frame for the WebRTC bridge.
+
+    The web app uses Simli's LiveKit client directly. On phone we proxy through
+    aiortc, so keep PyAV/numpy frames intact and let the WebRTC track convert
+    them. This avoids an opencv-python dependency and avoids sending raw plane
+    bytes as if they were JPEG frames.
+    """
+    if frame is None:
+        return None
+
+    if isinstance(frame, bytes):
+        return frame
+
+    if hasattr(frame, "reformat"):
+        return frame
+
+    try:
+        if hasattr(frame, "to_ndarray"):
+            try:
+                return frame.to_ndarray(format="rgb24")
+            except TypeError:
+                return frame.to_ndarray()
+    except Exception:
+        pass
+
+    if hasattr(frame, "ndim") and hasattr(frame, "shape"):
+        return frame
+
+    logger.warning(f"[SimliAvatar] Could not normalize frame type: {type(frame)}")
+    return None
 
 
 def _extract_frame_bytes(frame: Any) -> bytes | None:
