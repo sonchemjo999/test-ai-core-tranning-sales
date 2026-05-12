@@ -68,6 +68,7 @@ class AvatarMediaStreamTrack(_rtc["VideoStreamTrack"]):
         self._timestamp = 0
         self._time_base = Fraction(1, 90000)
         self._frame_duration = 3000  # 90kHz / 30fps
+        self._frame_interval = 1 / 30
         self._closed = False
 
     def enqueue_frame(self, frame: Any) -> None:
@@ -93,7 +94,15 @@ class AvatarMediaStreamTrack(_rtc["VideoStreamTrack"]):
         if self._closed:
             raise _rtc["MediaStreamError"]
 
-        frame_payload = await self._queue.get()
+        await asyncio.sleep(self._frame_interval)
+        try:
+            frame_payload = await asyncio.wait_for(
+                self._queue.get(),
+                timeout=0.001,
+            )
+        except asyncio.TimeoutError:
+            frame_payload = self._make_placeholder_frame()
+
         if frame_payload is None:
             raise _rtc["MediaStreamError"]
 
@@ -101,6 +110,13 @@ class AvatarMediaStreamTrack(_rtc["VideoStreamTrack"]):
         self._timestamp += self._frame_duration
         frame.pts = self._timestamp
         frame.time_base = self._time_base
+        return frame
+
+    def _make_placeholder_frame(self) -> Any:
+        av = _rtc["av"]
+        frame = av.VideoFrame(width=640, height=640, format="yuv420p")
+        for plane in frame.planes:
+            plane.update(bytes(plane.buffer_size))
         return frame
 
     def _coerce_video_frame(self, frame_payload: Any) -> Any:
