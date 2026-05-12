@@ -93,14 +93,13 @@ class AvatarMediaStreamTrack(_rtc["VideoStreamTrack"]):
                 break
         self._queue.put_nowait(frame)
         self._real_frame_count += 1
-        if self._real_frame_count <= 3 or self._real_frame_count % 30 == 0:
-            _avatar_log(
-                "%s queued real video frame #%s type=%s queue=%s",
-                self._session_id,
-                self._real_frame_count,
-                type(frame).__name__,
-                self._queue.qsize(),
-            )
+        _avatar_log(
+            "%s queued real video frame #%s type=%s queue=%s",
+            self._session_id,
+            self._real_frame_count,
+            type(frame).__name__,
+            self._queue.qsize(),
+        )
 
     def close(self) -> None:
         self._closed = True
@@ -149,6 +148,14 @@ class AvatarMediaStreamTrack(_rtc["VideoStreamTrack"]):
         self._timestamp += self._frame_duration
         frame.pts = self._timestamp
         frame.time_base = self._time_base
+        if self._real_frame_count <= 5 or self._real_frame_count % 30 == 0:
+            _avatar_log(
+                "%s sending video frame #%s real=%s placeholder=%s",
+                self._session_id,
+                self._real_frame_count + self._placeholder_frame_count,
+                self._real_frame_count,
+                self._placeholder_frame_count,
+            )
         return frame
 
     def _make_placeholder_frame(self) -> Any:
