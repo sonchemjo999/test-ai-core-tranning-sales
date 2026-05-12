@@ -302,6 +302,13 @@ class SimliAvatarManager:
                     except StopIteration:
                         break
                     except Exception as e:
+                        # Detect Simli rate limit — logs as RATE LIMIT message
+                        err_str = str(e)
+                        if "RATE LIMIT" in err_str or "rate limit" in err_str or "429" in err_str:
+                            _simli_log("RATE LIMIT DETECTED session=%s error=%s", session.session_id, err_str)
+                            if session.error_callback:
+                                session.error_callback(f"RATE_LIMIT: {err_str}")
+                            break
                         logger.error(
                             f"[SimliAvatar] getNextVideoFrame error for {session.session_id}: {e}"
                         )

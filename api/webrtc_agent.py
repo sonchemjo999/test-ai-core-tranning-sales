@@ -408,8 +408,7 @@ class AvatarWebRTCAgent:
     async def _flush_pending_audio(self) -> None:
         chunks = list(self._pending_audio_chunks)
         self._pending_audio_chunks.clear()
-        if chunks:
-            _avatar_log("%s flushing %s pending avatar audio chunks", self.session_id, len(chunks))
+        _avatar_log("%s flushing %s pending avatar audio chunks", self.session_id, len(chunks))
         for chunk in chunks:
             ok = await self._simli.send_audio(self.session_id, chunk)
             if not ok:
