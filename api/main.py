@@ -8,6 +8,7 @@ import os
 import re
 import uuid
 
+import httpx
 from fastapi import Body, FastAPI, HTTPException, Depends, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -415,6 +416,58 @@ def web_generate_scenario(body: WebGenerateScenarioRequest, _: str = Depends(ver
         company_context=result["company_context"],
         customer_persona=result["customer_persona"],
     )
+
+
+@app.post("/api/simli/token")
+async def get_simli_token(
+    body: dict | None = Body(default=None),
+    _: str = Depends(verify_api_key),
+) -> dict[str, object]:
+    """Issue a Simli AudioToVideo session token for phone clients.
+
+    POST /api/simli/token
+    Body (optional): {"gender": "male" | "female"}
+    Auth: X-API-Key header
+    Returns: {"success": true, "data": {"session_token": "...", "face_id": "..."}}
+    """
+    from core.config import SIMLI_API_KEY
+
+    if not SIMLI_API_KEY:
+        raise HTTPException(status_code=503, detail="Simli API is not configured on the server.")
+
+    gender = (body or {}).get("gender", "male") if body else "male"
+    is_female = str(gender).lower() == "female"
+
+    face_id = (
+        os.environ.get("SIMLI_FEMALE_FACE_ID", "cace3ef7-a4c4-425d-a8cf-a5358eb0c427")
+        if is_female
+        else "dd10cb5a-d31d-4f12-b69f-6db3383c006e"
+    )
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+        resp = await client.post(
+            "https://api.simli.ai/startAudioToVideoSession",
+            json={"apiKey": SIMLI_API_KEY, "faceId": face_id},
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Simli API error {resp.status_code}: {resp.text[:200]}",
+        )
+
+    data = resp.json()
+    session_token = data.get("data", {}).get("sessionToken") or data.get("sessionToken")
+    if not session_token:
+        raise HTTPException(status_code=502, detail="Simli API response missing sessionToken.")
+
+    return {
+        "success": True,
+        "data": {
+            "session_token": session_token,
+            "face_id": face_id,
+        },
+    }
 
 
 @app.post("/api/v1/training/sessions/{session_id}/avatar-token")

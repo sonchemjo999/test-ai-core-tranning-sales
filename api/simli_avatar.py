@@ -40,8 +40,8 @@ def _simli_log(message: str, *args: Any) -> None:
     logger.info(formatted)
 
 
-DEFAULT_FEMALE_FACE_ID = "dd10cb5a-d31d-4f12-b69f-6db3383c006e"
-DEFAULT_MALE_FACE_ID = "cace3ef7-a4c4-425d-a8cf-a5358eb0c427"
+DEFAULT_MALE_FACE_ID = "dd10cb5a-d31d-4f12-b69f-6db3383c006e"
+DEFAULT_FEMALE_FACE_ID = "cace3ef7-a4c4-425d-a8cf-a5358eb0c427"
 
 _MALE_FACE_ID = SIMLI_MALE_FACE_ID or DEFAULT_MALE_FACE_ID
 _FEMALE_FACE_ID = SIMLI_FEMALE_FACE_ID or DEFAULT_FEMALE_FACE_ID
