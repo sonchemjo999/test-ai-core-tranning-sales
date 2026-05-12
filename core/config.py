@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -40,3 +41,32 @@ SIMLI_ENABLED = os.getenv("SIMLI_ENABLED", "true").strip().lower() not in {
 }
 SIMLI_MALE_FACE_ID = os.getenv("SIMLI_MALE_FACE_ID", "").strip()
 SIMLI_FEMALE_FACE_ID = os.getenv("SIMLI_FEMALE_FACE_ID", "").strip()
+
+
+def _csv_env(name: str, default: str = "") -> list[str]:
+    raw = os.getenv(name, default).strip()
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _json_env(name: str) -> list[dict]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+# WebRTC ICE servers for phone avatar video. TURN is required for many hosted
+# environments because the aiortc peer may not be reachable via direct UDP.
+WEBRTC_STUN_URLS = _csv_env("WEBRTC_STUN_URLS", "stun:stun.l.google.com:19302")
+WEBRTC_TURN_URLS = _csv_env("WEBRTC_TURN_URLS")
+WEBRTC_TURN_USERNAME = os.getenv("WEBRTC_TURN_USERNAME", "").strip()
+WEBRTC_TURN_CREDENTIAL = os.getenv("WEBRTC_TURN_CREDENTIAL", "").strip()
+WEBRTC_ICE_SERVERS_JSON = _json_env("WEBRTC_ICE_SERVERS_JSON")

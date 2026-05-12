@@ -19,6 +19,13 @@ from typing import Any
 from fastapi import WebSocket
 
 from api.simli_avatar import get_simli_manager
+from core.config import (
+    WEBRTC_ICE_SERVERS_JSON,
+    WEBRTC_STUN_URLS,
+    WEBRTC_TURN_CREDENTIAL,
+    WEBRTC_TURN_URLS,
+    WEBRTC_TURN_USERNAME,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +69,79 @@ def _load_aiortc() -> dict[str, Any]:
 
 
 _rtc = _load_aiortc()
+
+
+def _configured_ice_servers() -> list[Any]:
+    ice_servers: list[Any] = []
+
+    for server in WEBRTC_ICE_SERVERS_JSON:
+        urls = server.get("urls")
+        if not urls:
+            continue
+        ice_servers.append(
+            _rtc["RTCIceServer"](
+                urls=urls,
+                username=server.get("username"),
+                credential=server.get("credential"),
+            )
+        )
+
+    if ice_servers:
+        return ice_servers
+
+    for url in WEBRTC_STUN_URLS:
+        ice_servers.append(_rtc["RTCIceServer"](urls=[url]))
+
+    if WEBRTC_TURN_URLS:
+        ice_servers.append(
+            _rtc["RTCIceServer"](
+                urls=WEBRTC_TURN_URLS,
+                username=WEBRTC_TURN_USERNAME or None,
+                credential=WEBRTC_TURN_CREDENTIAL or None,
+            )
+        )
+
+    return ice_servers
+
+
+def _ice_server_labels(ice_servers: list[Any]) -> list[str]:
+    labels: list[str] = []
+    for server in ice_servers:
+        urls = getattr(server, "urls", None)
+        if isinstance(urls, str):
+            url_list = [urls]
+        else:
+            url_list = list(urls or [])
+        for url in url_list:
+            if url.startswith("turn:") or url.startswith("turns:"):
+                labels.append(url.split("?", 1)[0] + "?transport=redacted")
+            else:
+                labels.append(url)
+    return labels
+
+
+def _sdp_summary(sdp: str | None) -> dict[str, Any]:
+    if not sdp:
+        return {"candidates": 0, "video_direction": None, "has_video": False}
+    lines = sdp.splitlines()
+    video_direction: str | None = None
+    in_video = False
+    for line in lines:
+        if line.startswith("m="):
+            in_video = line.startswith("m=video")
+        if in_video and line in {
+            "a=sendonly",
+            "a=recvonly",
+            "a=sendrecv",
+            "a=inactive",
+        }:
+            video_direction = line[2:]
+            break
+    return {
+        "candidates": sum(1 for line in lines if line.startswith("a=candidate:")),
+        "video_direction": video_direction,
+        "has_video": "m=video" in sdp,
+    }
 
 
 class AvatarMediaStreamTrack(_rtc["VideoStreamTrack"]):
@@ -238,8 +318,13 @@ class AvatarWebRTCAgent:
             return
 
         _avatar_log("%s creating peer connection gender=%s", self.session_id, self.gender)
-        ice_server = _rtc["RTCIceServer"](urls=["stun:stun.l.google.com:19302"])
-        config = _rtc["RTCConfiguration"](iceServers=[ice_server])
+        ice_servers = _configured_ice_servers()
+        _avatar_log(
+            "%s ICE servers configured: %s",
+            self.session_id,
+            _ice_server_labels(ice_servers),
+        )
+        config = _rtc["RTCConfiguration"](iceServers=ice_servers)
         self._pc = _rtc["RTCPeerConnection"](configuration=config)
         self._pc.addTrack(self._video_track)
         _avatar_log("%s outbound avatar video track added", self.session_id)
@@ -436,12 +521,15 @@ class AvatarWebRTCAgent:
         answer = await self._pc.createAnswer()
         await self._pc.setLocalDescription(answer)
         answer_sdp = self._pc.localDescription.sdp
+        summary = _sdp_summary(answer_sdp)
         _avatar_log(
-            "%s local answer ready type=%s sdp_len=%s has_video=%s",
+            "%s local answer ready type=%s sdp_len=%s has_video=%s video_direction=%s candidates=%s",
             self.session_id,
             self._pc.localDescription.type,
             len(answer_sdp or ""),
-            "m=video" in (answer_sdp or ""),
+            summary["has_video"],
+            summary["video_direction"],
+            summary["candidates"],
         )
         return {"type": self._pc.localDescription.type, "sdp": answer_sdp}
 

@@ -78,6 +78,29 @@ def _normalize_slug(value: str) -> str:
     return s or "generic"
 
 
+def _avatar_ice_servers_for_client() -> list[dict]:
+    from core.config import (
+        WEBRTC_ICE_SERVERS_JSON,
+        WEBRTC_STUN_URLS,
+        WEBRTC_TURN_CREDENTIAL,
+        WEBRTC_TURN_URLS,
+        WEBRTC_TURN_USERNAME,
+    )
+
+    if WEBRTC_ICE_SERVERS_JSON:
+        return WEBRTC_ICE_SERVERS_JSON
+
+    servers: list[dict] = [{"urls": url} for url in WEBRTC_STUN_URLS]
+    if WEBRTC_TURN_URLS:
+        turn_server: dict = {"urls": WEBRTC_TURN_URLS}
+        if WEBRTC_TURN_USERNAME:
+            turn_server["username"] = WEBRTC_TURN_USERNAME
+        if WEBRTC_TURN_CREDENTIAL:
+            turn_server["credential"] = WEBRTC_TURN_CREDENTIAL
+        servers.append(turn_server)
+    return servers
+
+
 # ================================================================
 # Original CLI/Mobile endpoints (unchanged)
 # ================================================================
@@ -399,7 +422,7 @@ def create_avatar_token(
     session_id: str,
     body: dict | None = Body(default=None),
     _: str = Depends(verify_api_key),
-) -> dict[str, str | int]:
+) -> dict[str, str | int | list[dict]]:
     """Issue a WebRTC avatar signaling token for phone clients."""
     from api.ws_auth import issue_ws_token, TTL
 
@@ -416,6 +439,7 @@ def create_avatar_token(
     return {
         "avatarSignalingWsUrl": f"{ws_base}/ws/signal/{session_id}?{query}",
         "avatarSessionToken": token,
+        "avatarIceServers": _avatar_ice_servers_for_client(),
         "expiresAt": exp,
     }
 
