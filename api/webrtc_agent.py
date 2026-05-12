@@ -115,6 +115,10 @@ class AvatarMediaStreamTrack(_rtc["VideoStreamTrack"]):
         except asyncio.QueueFull:
             pass
 
+    @property
+    def real_frame_count(self) -> int:
+        return self._real_frame_count
+
     async def recv(self) -> Any:
         if self._closed:
             raise _rtc["MediaStreamError"]
@@ -150,8 +154,10 @@ class AvatarMediaStreamTrack(_rtc["VideoStreamTrack"]):
     def _make_placeholder_frame(self) -> Any:
         av = _rtc["av"]
         frame = av.VideoFrame(width=640, height=640, format="yuv420p")
-        for plane in frame.planes:
-            plane.update(bytes(plane.buffer_size))
+        # yuv420p neutral gray: Y=16, U=128, V=128. U/V=0 renders as green.
+        frame.planes[0].update(bytes([16]) * frame.planes[0].buffer_size)
+        frame.planes[1].update(bytes([128]) * frame.planes[1].buffer_size)
+        frame.planes[2].update(bytes([128]) * frame.planes[2].buffer_size)
         return frame
 
     def _coerce_video_frame(self, frame_payload: Any) -> Any:
@@ -209,6 +215,7 @@ class AvatarWebRTCAgent:
         self._started = False
         self._simli_started = False
         self._simli_task: asyncio.Task | None = None
+        self._silence_task: asyncio.Task | None = None
         self._pending_audio_chunks: list[bytes] = []
         self._remote_track_tasks: list[asyncio.Task] = []
         self._closed = False
@@ -347,6 +354,7 @@ class AvatarWebRTCAgent:
             )
             self._simli_started = True
             _avatar_log("%s Simli started", self.session_id)
+            self._start_silence_keepalive()
             await self._flush_pending_audio()
         except asyncio.CancelledError:
             _avatar_log("%s Simli start cancelled", self.session_id)
@@ -354,6 +362,29 @@ class AvatarWebRTCAgent:
         except Exception as exc:
             _avatar_log("%s Simli start failed: %s", self.session_id, exc)
             logger.exception("[AvatarWebRTC] Simli start traceback for %s", self.session_id)
+
+    def _start_silence_keepalive(self) -> None:
+        if self._silence_task is not None or self._closed:
+            return
+        self._silence_task = asyncio.create_task(self._silence_keepalive_loop())
+
+    async def _silence_keepalive_loop(self) -> None:
+        try:
+            while not self._closed and self._video_track.real_frame_count == 0:
+                _avatar_log(
+                    "%s sending Simli silence keepalive real_frames=%s",
+                    self.session_id,
+                    self._video_track.real_frame_count,
+                )
+                ok = await self._simli.send_silence(self.session_id)
+                if not ok:
+                    ok = await self._simli.send_audio(self.session_id, bytes(32000))
+                    _avatar_log("%s fallback zero PCM keepalive sent ok=%s", self.session_id, ok)
+                await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _avatar_log("%s silence keepalive failed: %s", self.session_id, exc)
 
     async def _send_audio(self, audio_bytes: bytes) -> None:
         if not self._simli_started:
@@ -528,6 +559,11 @@ class AvatarWebRTCAgent:
             except asyncio.CancelledError:
                 pass
             self._simli_task = None
+        if self._silence_task is not None:
+            self._silence_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._silence_task
+            self._silence_task = None
         for task in self._remote_track_tasks:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

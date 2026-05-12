@@ -361,6 +361,27 @@ class SimliAvatarManager:
             _simli_log("send_audio failed session=%s error=%s", session_id, e)
             return False
 
+    async def send_silence(self, session_id: str) -> bool:
+        async with self._sessions_lock:
+            session = self._sessions.get(session_id)
+
+        if not session or not session.is_connected or not session.client:
+            _simli_log("send_silence session not ready=%s", session_id)
+            return False
+
+        try:
+            if hasattr(session.client, "sendSilence"):
+                result = session.client.sendSilence()
+                if hasattr(result, "__await__"):
+                    await result
+                _simli_log("send_silence ok session=%s method=sendSilence", session_id)
+                return True
+            _simli_log("send_silence method missing session=%s", session_id)
+            return False
+        except Exception as e:
+            _simli_log("send_silence failed session=%s error=%s", session_id, e)
+            return False
+
     async def send_text(self, session_id: str, text: str) -> bool:
         """Send text to Simli for avatar animation (if supported)."""
         async with self._sessions_lock:
