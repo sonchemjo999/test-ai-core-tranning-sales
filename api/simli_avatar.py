@@ -40,11 +40,13 @@ def _simli_log(message: str, *args: Any) -> None:
     logger.info(formatted)
 
 
-DEFAULT_MALE_FACE_ID = "dd10cb5a-d31d-4f12-b69f-6db3383c006e"
-DEFAULT_FEMALE_FACE_ID = "cace3ef7-a4c4-425d-a8cf-a5358eb0c427"
+DEFAULT_FEMALE_FACE_ID = "dd10cb5a-d31d-4f12-b69f-6db3383c006e"
+DEFAULT_MALE_FACE_ID = "cace3ef7-a4c4-425d-a8cf-a5358eb0c427"
 
 _MALE_FACE_ID = SIMLI_MALE_FACE_ID or DEFAULT_MALE_FACE_ID
 _FEMALE_FACE_ID = SIMLI_FEMALE_FACE_ID or DEFAULT_FEMALE_FACE_ID
+_MALE_FACE_ID_SOURCE = "env" if SIMLI_MALE_FACE_ID else "default"
+_FEMALE_FACE_ID_SOURCE = "env" if SIMLI_FEMALE_FACE_ID else "default"
 
 # Lazy SDK references — loaded on first use to avoid crash if package not installed
 _simli_client_cls: type | None = None
@@ -156,6 +158,12 @@ class SimliAvatarManager:
             return _FEMALE_FACE_ID
         return _MALE_FACE_ID
 
+    def _get_face_id_source(self, gender: str) -> str:
+        gender = gender.lower() if gender else "male"
+        if gender in ("female", "f", "nu"):
+            return _FEMALE_FACE_ID_SOURCE
+        return _MALE_FACE_ID_SOURCE
+
     async def start_session(
         self,
         session_id: str,
@@ -189,6 +197,7 @@ class SimliAvatarManager:
                 await self.stop_session(session_id)
 
             face_id = self._get_face_id(gender)
+            face_id_source = self._get_face_id_source(gender)
             session = SimliSession(
                 session_id=session_id,
                 gender=gender,
@@ -199,10 +208,11 @@ class SimliAvatarManager:
 
             try:
                 _simli_log(
-                    "starting session=%s gender=%s face_id=%s",
+                    "starting session=%s gender=%s face_id=%s face_id_source=%s",
                     session_id,
                     gender,
                     face_id,
+                    face_id_source,
                 )
                 await self._connect_to_simli(session)
                 self._sessions[session_id] = session
