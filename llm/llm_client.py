@@ -78,9 +78,10 @@ def _chat_json(
     system: str,
     user: str,
     temperature: float = 0.6,
+    max_retries: int = 3,
 ) -> dict[str, Any]:
     client = _client()
-    
+
     # Auto fallback to Gemini model if overriding OpenAI's default
     model_name = SALES_LLM_MODEL
     if OPEN_ROUTER_API and model_name.startswith("gpt") and not OPENAI_API_KEY:
@@ -88,17 +89,69 @@ def _chat_json(
     elif GEMINI_API_KEY and model_name.startswith("gpt") and not OPENAI_API_KEY:
         model_name = "gemini-2.5-flash-lite"
 
-    completion = client.chat.completions.create(
-        model=model_name,
-        temperature=temperature,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
+    for attempt in range(max_retries):
+        completion = client.chat.completions.create(
+            model=model_name,
+            temperature=temperature,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        raw = completion.choices[0].message.content or "{}"
+
+        # Try multiple JSON extraction strategies
+        for cleaned in _extract_json(raw):
+            try:
+                return json.loads(cleaned)
+            except json.JSONDecodeError:
+                continue
+
+        # Reduce temperature on retry to get more deterministic output
+        if attempt < max_retries - 1:
+            temperature = max(0.1, temperature - 0.2)
+
+    # Last resort: return a safe default structure
+    raise ValueError(
+        f"Failed to parse JSON after {max_retries} attempts. "
+        "Model output may contain invalid JSON syntax."
     )
-    raw = completion.choices[0].message.content or "{}"
-    return json.loads(raw)
+
+
+def _extract_json(raw: str) -> list[str]:
+    """Generate candidate JSON strings from LLM output using various strategies."""
+    candidates = []
+
+    # Strategy 1: direct
+    candidates.append(raw.strip())
+
+    # Strategy 2: strip markdown code fences
+    for fence in ("```json", "```JSON", "```"):
+        if fence in raw:
+            start = raw.find(fence)
+            end = raw.rfind("```")
+            if end > start:
+                candidates.append(raw[start + len(fence):end].strip())
+                break
+
+    # Strategy 3: strip trailing commas (common LLM mistake)
+    stripped = _strip_trailing_commas(raw)
+    candidates.append(stripped)
+
+    # Strategy 4: extract first {...} block
+    import re
+    brace_match = re.search(r"\{[\s\S]*\}", raw)
+    if brace_match:
+        brace_block = brace_match.group(0)
+        candidates.append(_strip_trailing_commas(brace_block))
+
+    return candidates
+
+
+def _strip_trailing_commas(text: str) -> str:
+    """Remove trailing commas before } or ] — common LLM JSON mistake."""
+    return re.sub(r",\s*([\]}])", r"\1", text)
 
 
 def generate_customer_turn(state: SalesSessionState) -> dict[str, Any]:
@@ -518,7 +571,19 @@ def generate_deep_read(*, raw_markdown: str) -> dict[str, Any]:
         ],
     )
     raw = completion.choices[0].message.content or "{}"
-    data = json.loads(raw)
+
+    # Try multiple JSON extraction strategies
+    for cleaned in _extract_json(raw):
+        try:
+            data = json.loads(cleaned)
+            break
+        except json.JSONDecodeError:
+            continue
+    else:
+        raise ValueError(
+            f"[deep-read] Failed to parse JSON after 3 strategies. "
+            "Model output may contain invalid JSON syntax."
+        )
 
     # Validate structure
     cheat_sheet = data.get("cheat_sheet", {})
