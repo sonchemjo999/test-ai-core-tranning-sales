@@ -5,6 +5,7 @@ OpenAI JSON-mode helpers for customer simulation and evaluation.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, AsyncGenerator
 
 from openai import OpenAI, AsyncOpenAI
