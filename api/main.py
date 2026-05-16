@@ -8,7 +8,6 @@ import os
 import re
 import uuid
 
-import httpx
 from fastapi import Body, FastAPI, HTTPException, Depends, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -77,29 +76,6 @@ def _normalize_slug(value: str) -> str:
     s = re.sub(r"[\s\-]+", "_", s)
     s = re.sub(r"[^a-z0-9_]", "", s)
     return s or "generic"
-
-
-def _avatar_ice_servers_for_client() -> list[dict]:
-    from core.config import (
-        WEBRTC_ICE_SERVERS_JSON,
-        WEBRTC_STUN_URLS,
-        WEBRTC_TURN_CREDENTIAL,
-        WEBRTC_TURN_URLS,
-        WEBRTC_TURN_USERNAME,
-    )
-
-    if WEBRTC_ICE_SERVERS_JSON:
-        return WEBRTC_ICE_SERVERS_JSON
-
-    servers: list[dict] = [{"urls": url} for url in WEBRTC_STUN_URLS]
-    if WEBRTC_TURN_URLS:
-        turn_server: dict = {"urls": WEBRTC_TURN_URLS}
-        if WEBRTC_TURN_USERNAME:
-            turn_server["username"] = WEBRTC_TURN_USERNAME
-        if WEBRTC_TURN_CREDENTIAL:
-            turn_server["credential"] = WEBRTC_TURN_CREDENTIAL
-        servers.append(turn_server)
-    return servers
 
 
 # ================================================================
@@ -340,6 +316,7 @@ async def web_chat(body: WebChatRequest, _: str = Depends(verify_api_key)):
         ai_tone=body.ai_tone,
         follow_up_depth=body.follow_up_depth,
         time_remaining_seconds=body.time_remaining_seconds,
+        gender=body.gender,
     )
 
     # Force end if max turns reached
@@ -418,91 +395,6 @@ def web_generate_scenario(body: WebGenerateScenarioRequest, _: str = Depends(ver
     )
 
 
-@app.post("/api/simli/token")
-async def get_simli_token(
-    body: dict | None = Body(default=None),
-    _: str = Depends(verify_api_key),
-) -> dict[str, object]:
-    """Issue a Simli AudioToVideo session token for phone clients.
-
-    POST /api/simli/token
-    Body (optional): {"gender": "male" | "female"}
-    Auth: X-API-Key header
-    Returns: {"success": true, "data": {"session_token": "...", "face_id": "..."}}
-    """
-    from core.config import SIMLI_API_KEY
-
-    if not SIMLI_API_KEY:
-        raise HTTPException(status_code=503, detail="Simli API is not configured on the server.")
-
-    gender = (body or {}).get("gender", "male") if body else "male"
-    is_female = str(gender).lower() == "female"
-
-    face_id = (
-        os.environ.get("SIMLI_FEMALE_FACE_ID", "cace3ef7-a4c4-425d-a8cf-a5358eb0c427")
-        if is_female
-        else "dd10cb5a-d31d-4f12-b69f-6db3383c006e"
-    )
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
-        resp = await client.post(
-            "https://api.simli.ai/compose/token",
-            headers={"x-simli-api-key": SIMLI_API_KEY},
-            json={
-                "faceId": face_id,
-                "handleSilence": True,
-                "maxSessionLength": 600,
-                "maxIdleTime": 120,
-                "audioInputFormat": "pcm16",
-            },
-        )
-
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Simli API error {resp.status_code}: {resp.text[:200]}",
-        )
-
-    data = resp.json()
-    session_token = data.get("data", {}).get("session_token") or data.get("sessionToken") or data.get("session_token")
-    if not session_token:
-        raise HTTPException(status_code=502, detail="Simli API response missing sessionToken.")
-
-    return {
-        "success": True,
-        "data": {
-            "session_token": session_token,
-            "face_id": face_id,
-        },
-    }
-
-
-@app.post("/api/v1/training/sessions/{session_id}/avatar-token")
-def create_avatar_token(
-    session_id: str,
-    body: dict | None = Body(default=None),
-    _: str = Depends(verify_api_key),
-) -> dict[str, str | int | list[dict]]:
-    """Issue a WebRTC avatar signaling token for phone clients."""
-    from api.ws_auth import issue_ws_token, TTL
-
-    payload = body or {}
-    gender = str(payload.get("gender") or "male")
-    user_id = str(payload.get("user_id") or "phone")
-    token, exp = issue_ws_token(session_id=session_id, user_id=user_id, ttl_seconds=TTL)
-    ws_base = (
-        os.environ.get("CORE_AI_PUBLIC_WS_URL")
-        or os.environ.get("PUBLIC_WS_URL")
-        or "ws://localhost:8001"
-    ).rstrip("/")
-    query = f"token={token}&gender={gender}"
-    return {
-        "avatarSignalingWsUrl": f"{ws_base}/ws/signal/{session_id}?{query}",
-        "avatarSessionToken": token,
-        "avatarIceServers": _avatar_ice_servers_for_client(),
-        "expiresAt": exp,
-    }
-
 @app.post("/web/parse-document", response_model=ParseDocumentResponse)
 async def web_parse_document(
     file: UploadFile,
@@ -564,48 +456,6 @@ def web_deep_read(body: DeepReadRequest, _: str = Depends(verify_api_key)):
         )
 
     return DeepReadResponse(**result)
-
-
-@app.websocket("/ws/signal/{session_id}")
-async def avatar_signal_websocket(
-    websocket: WebSocket,
-    session_id: str,
-    token: str | None = None,
-    gender: str = "male",
-):
-    """WebRTC signaling endpoint for phone avatar video."""
-    from api.ws_auth import verify_ws_token
-
-    if not token:
-        await websocket.close(code=1008, reason="Missing auth token")
-        return
-
-    valid, reason = verify_ws_token(token, session_id)
-    if not valid:
-        await websocket.close(code=1008, reason=f"Auth failed: {reason}")
-        return
-
-    await websocket.accept()
-    try:
-        from api.webrtc_agent import AvatarWebRTCAgent
-
-        agent = AvatarWebRTCAgent(session_id=session_id, gender=gender)
-        await agent.run_signaling(websocket)
-    except WebSocketDisconnect:
-        print(f"Avatar signaling disconnected: {session_id}")
-    except Exception as e:
-        import traceback
-
-        print(f"Avatar signaling error for {session_id}: {e}")
-        traceback.print_exc()
-        try:
-            await websocket.send_json({"type": "error", "message": str(e)})
-        except Exception:
-            pass
-        try:
-            await websocket.close(code=1011, reason="Avatar signaling error")
-        except Exception:
-            pass
 
 
 @app.websocket("/ws/call/{session_id}")
@@ -701,6 +551,7 @@ async def call_room_websocket(
                     current_turn=(len(history) // 2) + 1,
                     max_turns=12,
                     time_remaining_seconds=time_remaining,
+                    gender=gender,
                 )
                 print(f"[LATENCY][TIP-003] turn={_turn_counter} | stream_create: {(time.perf_counter() - stream_create_start)*1000:.0f}ms")
 

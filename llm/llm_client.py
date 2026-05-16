@@ -5,7 +5,6 @@ OpenAI JSON-mode helpers for customer simulation and evaluation.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, AsyncGenerator
 
 from openai import OpenAI, AsyncOpenAI
@@ -20,6 +19,7 @@ from llm.prompts import (
     EVALUATOR_SYSTEM_PROMPT_WEB,
     GENERATE_SCENARIO_SYSTEM_PROMPT,
     MASSIVE_CONTEXT_EXTRACTION_PROMPT,
+    SECURITY_DIRECTIVE,
     persona_instruction,
     scenario_brief,
 )
@@ -270,11 +270,6 @@ WEB_RUBRIC_KEYS = (
     "next_step",
 )
 
-GENDER_MAP: dict[str, str] = {
-    "male":   "Gi\u1edbi t\u00ednh c\u1ee7a b\u1ea1n: Nam. X\u01b0ng h\u00f4: anh (khi n\u00f3i v\u1edbi Sales) v\u00e0 em (khi Sales g\u1ecdi b\u1ea1n). D\u00f9ng v\u0103n phong d\u1ee9t kho\u00e1t, th\u1eb3ng th\u1eafn.",
-    "female": "Gi\u1edbi t\u00ednh c\u1ee7a b\u1ea1n: N\u1eef. X\u01b0ng h\u00f4: ch\u1ecb (khi n\u00f3i v\u1edbi Sales) v\u00e0 em (khi Sales g\u1ecdi b\u1ea1n). D\u00f9ng v\u0103n phong l\u1ecbch s\u1ef1, \u0111\u00f4i khi \u00e2n c\u1ea7n h\u01a1n.",
-}
-
 
 def generate_customer_turn_web(
     *,
@@ -303,6 +298,11 @@ def generate_customer_turn_web(
         "deep": "Liên tục truy vấn sâu, lật lại vấn đề, không dễ dàng bị thuyết phục, hỏi vặn lại câu trả lời trước đó.",
         "moderate": "Hỏi lại 1-2 câu nếu chưa rõ, phản ứng ở mức bình thường."
     }
+    gender_map = {
+        "female": "NỮ. Bạn là phụ nữ Việt Nam. Giọng nói và cách nói chuyện phải tự nhiên như phụ nữ Việt Nam thật sự.",
+        "male": "NAM. Bạn là đàn ông Việt Nam. Giọng nói và cách nói chuyện phải tự nhiên như đàn ông Việt Nam thật sự.",
+    }
+    gender_description = gender_map.get(gender.lower(), gender_map["male"])
 
     time_instruction = ""
     if time_remaining_seconds is not None and time_remaining_seconds <= 60:
@@ -312,10 +312,10 @@ def generate_customer_turn_web(
         scenario_title=scenario_title,
         scenario_description=scenario_description,
         customer_persona=customer_persona,
-        gender_instruction=GENDER_MAP.get(gender, GENDER_MAP["male"]),
         ai_tone_instruction=f"Thái độ của bạn: {tone_map.get(ai_tone, tone_map['neutral'])}",
         follow_up_depth_instruction=f"Mức độ truy vấn: {depth_map.get(follow_up_depth, depth_map['moderate'])}",
         time_instruction=time_instruction,
+        gender_description=gender_description,
     )
 
     # Inject company context + guardrails (ported from web route.ts)
@@ -633,18 +633,25 @@ async def generate_customer_turn_voice_stream(
     instead of raw company_context. This keeps the prompt small for low TTFT
     while giving the AI accurate product knowledge, brand voice, and objections.
     """
+    gender_map = {
+        "female": "NỮ. Bạn là phụ nữ Việt Nam. Giọng nói và cách nói chuyện phải tự nhiên như phụ nữ Việt Nam thật sự.",
+        "male": "NAM. Bạn là đàn ông Việt Nam. Giọng nói và cách nói chuyện phải tự nhiên như đàn ông Việt Nam thật sự.",
+    }
+    gender_description = gender_map.get(gender.lower(), gender_map["male"])
     
     # Prompt is concise, not JSON mode, optimized for voice latency.
     time_instruction = ""
     if time_remaining_seconds is not None and time_remaining_seconds <= 60:
         time_instruction = f" CHỈ CÒN {time_remaining_seconds} GIÂY, hãy chủ động nhắc đến việc sắp hết thời gian và hẹn lịch tiếp theo để chốt lại cuộc gọi."
 
-    gender_instruction = GENDER_MAP.get(gender, GENDER_MAP["male"])
-
     system = (
+        SECURITY_DIRECTIVE +
         f"Bạn là khách hàng trong cuộc gọi luyện sales B2B. Kịch bản: {scenario_title}.\n"
         f"Tính cách: {customer_persona}.\n"
-        f"{gender_instruction}\n"
+        f"\n== THÔNG TIN BẢN THÂN (RẤT QUAN TRỌNG) ==\n"
+        f"Giới tính: {gender_description}\n"
+        f"- Khi xưng hô với Sales, dùng đúng giới tính: gọi Sales là 'anh' hoặc 'chị' tùy giới tính.\n"
+        f"- Khi được hỏi 'bạn là nam hay nữ', hãy trả lời ĐÚNG theo giới tính được gán.\n"
         f"{time_instruction}\n\n"
         "QUY TẮC PHẢN HỒI QUA GIỌNG NÓI:\n"
         "- Phản hồi cực kỳ tự nhiên, có cảm xúc và điệu bộ như người thật đang nghe điện thoại.\n"
