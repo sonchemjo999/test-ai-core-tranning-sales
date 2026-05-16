@@ -1,6 +1,6 @@
 # FastAPI + WebSocket
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
 websockets>=12.0
 python-multipart>=0.0.9
 aiortc>=1.9.0
@@ -19,8 +19,8 @@ langchain-openai>=0.2.0
 langchain-google-genai>=0.1.0
 
 # AI Providers
-anthropic>=0.27.0
-openai>=1.0.0
+anthropic>=0.40.0
+openai>=1.50.0
 google-genai>=0.8.0
 groq>=0.5.0
 openrouter>=0.3.0
@@ -34,3 +34,6 @@ tabulate>=0.9.0
 
 # Simli Avatar (AI-powered video avatar)
 simli-ai>=0.1.0
+starlette>=0.40.0,<0.49.0
+pydantic>=2.0.0
+pytest>=8.0.0
