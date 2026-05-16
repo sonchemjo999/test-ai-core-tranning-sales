@@ -269,6 +269,11 @@ WEB_RUBRIC_KEYS = (
     "next_step",
 )
 
+GENDER_MAP: dict[str, str] = {
+    "male":   "Gi\u1edbi t\u00ednh c\u1ee7a b\u1ea1n: Nam. X\u01b0ng h\u00f4: anh (khi n\u00f3i v\u1edbi Sales) v\u00e0 em (khi Sales g\u1ecdi b\u1ea1n). D\u00f9ng v\u0103n phong d\u1ee9t kho\u00e1t, th\u1eb3ng th\u1eafn.",
+    "female": "Gi\u1edbi t\u00ednh c\u1ee7a b\u1ea1n: N\u1eef. X\u01b0ng h\u00f4: ch\u1ecb (khi n\u00f3i v\u1edbi Sales) v\u00e0 em (khi Sales g\u1ecdi b\u1ea1n). D\u00f9ng v\u0103n phong l\u1ecbch s\u1ef1, \u0111\u00f4i khi \u00e2n c\u1ea7n h\u01a1n.",
+}
+
 
 def generate_customer_turn_web(
     *,
@@ -284,6 +289,7 @@ def generate_customer_turn_web(
     ai_tone: str = "neutral",
     follow_up_depth: str = "moderate",
     time_remaining_seconds: int | None = None,
+    gender: str = "male",
 ) -> dict[str, Any]:
     """Customer turn for Web App — receives context directly, no slug lookup."""
     tone_map = {
@@ -305,6 +311,7 @@ def generate_customer_turn_web(
         scenario_title=scenario_title,
         scenario_description=scenario_description,
         customer_persona=customer_persona,
+        gender_instruction=GENDER_MAP.get(gender, GENDER_MAP["male"]),
         ai_tone_instruction=f"Thái độ của bạn: {tone_map.get(ai_tone, tone_map['neutral'])}",
         follow_up_depth_instruction=f"Mức độ truy vấn: {depth_map.get(follow_up_depth, depth_map['moderate'])}",
         time_instruction=time_instruction,
@@ -617,6 +624,7 @@ async def generate_customer_turn_voice_stream(
     current_turn: int,
     max_turns: int,
     time_remaining_seconds: int | None = None,
+    gender: str = "male",
 ) -> AsyncGenerator[str, None]:
     """Voice-optimized streaming customer turn. Yields sentences as they are generated.
 
@@ -630,9 +638,12 @@ async def generate_customer_turn_voice_stream(
     if time_remaining_seconds is not None and time_remaining_seconds <= 60:
         time_instruction = f" CHỈ CÒN {time_remaining_seconds} GIÂY, hãy chủ động nhắc đến việc sắp hết thời gian và hẹn lịch tiếp theo để chốt lại cuộc gọi."
 
+    gender_instruction = GENDER_MAP.get(gender, GENDER_MAP["male"])
+
     system = (
         f"Bạn là khách hàng trong cuộc gọi luyện sales B2B. Kịch bản: {scenario_title}.\n"
         f"Tính cách: {customer_persona}.\n"
+        f"{gender_instruction}\n"
         f"{time_instruction}\n\n"
         "QUY TẮC PHẢN HỒI QUA GIỌNG NÓI:\n"
         "- Phản hồi cực kỳ tự nhiên, có cảm xúc và điệu bộ như người thật đang nghe điện thoại.\n"
