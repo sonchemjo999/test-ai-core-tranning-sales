@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, AsyncGenerator
-
+import re
 from openai import OpenAI, AsyncOpenAI
 
 from core.config import OPENAI_API_KEY, SALES_LLM_MODEL, GEMINI_API_KEY, OPEN_ROUTER_API, GROQ_API_KEY
